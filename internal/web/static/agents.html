@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Agents - MCMon Host</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<nav>
+  <span class="logo">⚡ MCMon Host</span>
+  <a href="/">Dashboard</a>
+  <a href="/agents.html" class="active">Agents</a>
+  <span class="spacer"></span>
+  <div class="auth-token">
+    <input type="password" id="adminToken" placeholder="Admin token" autocomplete="off" />
+    <button class="btn" id="saveToken">Save</button>
+    <span class="status" id="authStatus"></span>
+  </div>
+  <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
+</nav>
+
+<div class="wrap">
+
+<div class="card">
+  <div class="card-header">
+    <h2>Connected Agents</h2>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Name</th><th>ID</th><th>Version</th><th>Last seen</th><th>Targets</th></tr>
+    </thead>
+    <tbody id="agentBody"></tbody>
+  </table>
+  <div id="emptyMsg" class="muted" style="padding:16px;text-align:center;display:none;">No agents registered yet.</div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Setup</h2>
+  </div>
+  <p class="muted" style="margin-bottom:12px;">To register a new agent, run <code>mcmon-agent</code> with your discovery key. The agent will auto-register and start sending data.</p>
+  <p class="muted">Discovery endpoint: <code>POST /api/discover</code> with header <code>Authorization: Bearer &lt;discovery_key&gt;</code></p>
+</div>
+
+</div>
+
+<script>
+const themeBtn = document.getElementById('themeBtn');
+const adminTokenInput = document.getElementById('adminToken');
+const authStatus = document.getElementById('authStatus');
+adminTokenInput.value = localStorage.getItem('mcmon-host-admin-token') || '';
+document.getElementById('saveToken').onclick = () => {
+  localStorage.setItem('mcmon-host-admin-token', adminTokenInput.value.trim());
+  authStatus.textContent = 'Saved';
+  loadAgents();
+};
+function apiFetch(url) {
+  const headers = {};
+  const token = localStorage.getItem('mcmon-host-admin-token') || adminTokenInput.value.trim();
+  if (token) headers.Authorization = 'Bearer ' + token;
+  return fetch(url, { headers }).then(async r => {
+    if (r.status === 401) {
+      authStatus.textContent = 'Token required';
+      throw new Error('unauthorized');
+    }
+    if (!r.ok) throw new Error(await r.text());
+    authStatus.textContent = token ? 'Authorized' : '';
+    return r.json();
+  });
+}
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark);
+  themeBtn.textContent = dark ? '☀️' : '🌙';
+  localStorage.setItem('mcmon-theme', dark ? 'dark' : 'light');
+}
+themeBtn.onclick = () => { applyTheme(!document.body.classList.contains('dark')); };
+applyTheme(localStorage.getItem('mcmon-theme') === 'dark' || (!localStorage.getItem('mcmon-theme') && matchMedia('(prefers-color-scheme:dark)').matches));
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function loadAgents() {
+  const body = document.getElementById('agentBody');
+  const emptyMsg = document.getElementById('emptyMsg');
+  let agents;
+  try {
+    agents = await apiFetch('/api/agents') || [];
+  } catch (e) {
+    body.innerHTML = '';
+    emptyMsg.style.display = '';
+    emptyMsg.textContent = 'Enter the admin token from the host config to view agents.';
+    return;
+  }
+
+  if (agents.length === 0) {
+    body.innerHTML = '';
+    emptyMsg.style.display = '';
+    return;
+  }
+  emptyMsg.style.display = 'none';
+
+  const targetsByAgent = {};
+  for (const a of agents) {
+    const targets = await apiFetch(`/api/agents/${encodeURIComponent(a.id)}/targets`) || [];
+    targetsByAgent[a.id] = targets;
+  }
+
+  body.innerHTML = agents.map(a => {
+    const targets = targetsByAgent[a.id] || [];
+    const targetNames = targets.map(t => esc(t.name || `${t.host}:${t.port}`)).join(', ') || '<span class="muted">none</span>';
+    return `<tr>
+      <td><span class="dot ${a.online ? 'online' : 'offline'}"></span>${a.online ? 'Online' : 'Offline'}</td>
+      <td>${esc(a.name)}</td>
+      <td class="muted">${esc(a.id)}</td>
+      <td>${esc(a.version || '—')}</td>
+      <td>${a.last_seen ? new Date(a.last_seen * 1000).toLocaleString() : '—'}</td>
+      <td>${targetNames}</td>
+    </tr>`;
+  }).join('');
+}
+
+loadAgents();
+setInterval(loadAgents, 15000);
+</script>
+
+</body>
+</html>

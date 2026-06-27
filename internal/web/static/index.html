@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MCMon Host - Dashboard</title>
+<link rel="stylesheet" href="/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+
+<nav>
+  <span class="logo">⚡ MCMon Host</span>
+  <a href="/" class="active">Dashboard</a>
+  <a href="/agents.html">Agents</a>
+  <span class="spacer"></span>
+  <div class="auth-token">
+    <input type="password" id="adminToken" placeholder="Admin token" autocomplete="off" />
+    <button class="btn" id="saveToken">Save</button>
+    <span class="status" id="authStatus"></span>
+  </div>
+  <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
+</nav>
+
+<div class="wrap">
+
+<div class="stats-row" id="statsRow">
+  <div class="stat-card"><div class="stat-label">Agents</div><div class="stat-value" id="statAgents">—</div></div>
+  <div class="stat-card"><div class="stat-label">Online</div><div class="stat-value green" id="statOnline">—</div></div>
+  <div class="stat-card"><div class="stat-label">Offline</div><div class="stat-value red" id="statOffline">—</div></div>
+  <div class="stat-card"><div class="stat-label">Servers</div><div class="stat-value accent" id="statServers">—</div></div>
+</div>
+
+<div class="card-header"><h2>All Monitored Servers</h2></div>
+<div class="server-grid" id="serverGrid"></div>
+
+</div>
+
+<script>
+const themeBtn = document.getElementById('themeBtn');
+const adminTokenInput = document.getElementById('adminToken');
+const authStatus = document.getElementById('authStatus');
+adminTokenInput.value = localStorage.getItem('mcmon-host-admin-token') || '';
+document.getElementById('saveToken').onclick = () => {
+  localStorage.setItem('mcmon-host-admin-token', adminTokenInput.value.trim());
+  authStatus.textContent = 'Saved';
+  loadAll();
+};
+function apiFetch(url) {
+  const headers = {};
+  const token = localStorage.getItem('mcmon-host-admin-token') || adminTokenInput.value.trim();
+  if (token) headers.Authorization = 'Bearer ' + token;
+  return fetch(url, { headers }).then(async r => {
+    if (r.status === 401) {
+      authStatus.textContent = 'Token required';
+      throw new Error('unauthorized');
+    }
+    if (!r.ok) throw new Error(await r.text());
+    authStatus.textContent = token ? 'Authorized' : '';
+    return r.json();
+  });
+}
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark);
+  themeBtn.textContent = dark ? '☀️' : '🌙';
+  localStorage.setItem('mcmon-theme', dark ? 'dark' : 'light');
+}
+themeBtn.onclick = () => { applyTheme(!document.body.classList.contains('dark')); loadAll(); };
+applyTheme(localStorage.getItem('mcmon-theme') === 'dark' || (!localStorage.getItem('mcmon-theme') && matchMedia('(prefers-color-scheme:dark)').matches));
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function chartColors() {
+  const dark = document.body.classList.contains('dark');
+  return {
+    band: dark ? 'rgba(140,120,255,0.15)' : 'rgba(100,80,200,0.12)',
+    bandBorder: dark ? 'rgba(140,120,255,0.3)' : 'rgba(100,80,200,0.25)',
+    median: dark ? '#8be98b' : '#00a040',
+    grid: dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+  };
+}
+
+const miniCharts = {};
+
+async function loadAll() {
+  let agents, targets;
+  try {
+    [agents, targets] = await Promise.all([
+      apiFetch('/api/agents'),
+      apiFetch('/api/targets'),
+    ]);
+  } catch (e) {
+    document.getElementById('serverGrid').innerHTML = '<div class="muted" style="padding:24px;text-align:center;">Enter the admin token from the host config to view data.</div>';
+    return;
+  }
+
+  const agentList = agents || [];
+  const targetList = targets || [];
+  const online = agentList.filter(a => a.online).length;
+
+  document.getElementById('statAgents').textContent = agentList.length;
+  document.getElementById('statOnline').textContent = online;
+  document.getElementById('statOffline').textContent = agentList.length - online;
+  document.getElementById('statServers').textContent = targetList.length;
+
+  const agentMap = {};
+  agentList.forEach(a => { agentMap[a.id] = a; });
+
+  const grid = document.getElementById('serverGrid');
+  grid.innerHTML = '';
+
+  for (const t of targetList) {
+    const agent = agentMap[t.agent_id] || {};
+    const card = document.createElement('div');
+    card.className = 'server-card';
+    card.onclick = () => { location.href = `/detail.html?agent=${encodeURIComponent(t.agent_id)}&target=${encodeURIComponent(t.target_id)}`; };
+
+    const isOnline = agent.online || false;
+    card.innerHTML = `
+      <div class="server-header">
+        <span class="dot ${isOnline ? 'online' : 'offline'}"></span>
+        <span class="server-name">${esc(t.name)}</span>
+      </div>
+      <div class="server-host">${esc(t.host)}:${t.port} · Agent: ${esc(agent.name || t.agent_id)}</div>
+      <div class="server-stats">
+        <span id="stat-med-${t.agent_id}-${t.target_id}">Median: —</span>
+        <span id="stat-loss-${t.agent_id}-${t.target_id}">Loss: —</span>
+      </div>
+      <canvas id="chart-${t.agent_id}-${t.target_id}" height="80"></canvas>
+    `;
+    grid.appendChild(card);
+
+    loadMiniChart(t.agent_id, t.target_id);
+  }
+
+  if (targetList.length === 0) {
+    grid.innerHTML = '<div class="muted" style="padding:24px;text-align:center;">No servers being monitored yet. Connect an agent to get started.</div>';
+  }
+}
+
+async function loadMiniChart(agentId, targetId) {
+  const data = await apiFetch(`/api/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=1h`);
+  const arr = data || [];
+
+  const last = arr.length ? arr[arr.length - 1] : null;
+  const medEl = document.getElementById(`stat-med-${agentId}-${targetId}`);
+  const lossEl = document.getElementById(`stat-loss-${agentId}-${targetId}`);
+  if (medEl && last) {
+    medEl.textContent = 'Median: ' + (last.p50_ms != null ? last.p50_ms.toFixed(1) + ' ms' : '—');
+  }
+  if (lossEl && arr.length) {
+    const avgLoss = arr.reduce((s, d) => s + d.loss_pct, 0) / arr.length * 100;
+    lossEl.textContent = 'Loss: ' + avgLoss.toFixed(1) + '%';
+  }
+
+  const key = `${agentId}-${targetId}`;
+  if (miniCharts[key]) miniCharts[key].destroy();
+
+  const canvas = document.getElementById(`chart-${agentId}-${targetId}`);
+  if (!canvas) return;
+  const cc = chartColors();
+
+  miniCharts[key] = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: arr.map(d => ''),
+      datasets: [{
+        data: arr.map(d => d.p50_ms),
+        borderColor: cc.median,
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.3,
+        fill: { target: 'origin', above: cc.band },
+      }]
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false },
+        y: { display: false, min: 0 },
+      },
+    },
+  });
+}
+
+loadAll();
+setInterval(loadAll, 30000);
+</script>
+
+</body>
+</html>

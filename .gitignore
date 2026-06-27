@@ -1,0 +1,37 @@
+# OS / editor files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Local editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Go build outputs
+/bin/
+/build/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/mcmon-host
+
+# Coverage and temporary files
+/coverage/
+coverage.*
+*.coverprofile
+/tmp/
+
+# Local runtime files
+/config.json
+/*.db
+/*.db-*

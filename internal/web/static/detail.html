@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Server Detail - MCMon Host</title>
+<link rel="stylesheet" href="/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
+</head>
+<body>
+
+<nav>
+  <span class="logo">⚡ MCMon Host</span>
+  <a href="/">Dashboard</a>
+  <a href="/agents.html">Agents</a>
+  <span class="spacer"></span>
+  <div class="auth-token">
+    <input type="password" id="adminToken" placeholder="Admin token" autocomplete="off" />
+    <button class="btn" id="saveToken">Save</button>
+    <span class="status" id="authStatus"></span>
+  </div>
+  <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
+</nav>
+
+<div class="wrap">
+
+<a href="/" class="back-link">← Back to Dashboard</a>
+
+<div class="card" id="infoCard">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+    <span class="dot" id="statusDot"></span>
+    <span style="font-size:22px;font-weight:700;" id="serverName">—</span>
+    <span style="font-size:14px;color:var(--text-faint);" id="serverHost">—</span>
+  </div>
+  <div class="muted" id="agentInfo"></div>
+</div>
+
+<div class="stats-row">
+  <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value" id="statStatus">—</div></div>
+  <div class="stat-card"><div class="stat-label">Current Median</div><div class="stat-value" id="statMedian">—</div></div>
+  <div class="stat-card"><div class="stat-label">Current Min</div><div class="stat-value" id="statMin">—</div></div>
+  <div class="stat-card"><div class="stat-label">Current Max</div><div class="stat-value" id="statMax">—</div></div>
+  <div class="stat-card"><div class="stat-label">Avg Loss</div><div class="stat-value" id="statLoss">—</div></div>
+  <div class="stat-card"><div class="stat-label">Samples</div><div class="stat-value" id="statSamples">—</div></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <div class="row" id="rangeButtons"></div>
+    <span style="flex:1"></span>
+    <button class="btn ghost" id="resetZoom">↺ Reset zoom</button>
+  </div>
+</div>
+
+<div class="card">
+  <div style="position:relative;">
+    <canvas id="chart" height="110"></canvas>
+  </div>
+  <div class="muted" style="margin-top:12px;">
+    Shaded band: min–max &nbsp;|&nbsp; Green line: median &nbsp;|&nbsp; Red bars: packet loss %.
+    &nbsp; <strong>Scroll</strong> zoom · <strong>Drag</strong> pan · <strong>Shift+drag</strong> box zoom · <strong>Double-click</strong> reset.
+  </div>
+</div>
+
+</div>
+
+<script>
+const themeBtn = document.getElementById('themeBtn');
+const adminTokenInput = document.getElementById('adminToken');
+const authStatus = document.getElementById('authStatus');
+adminTokenInput.value = localStorage.getItem('mcmon-host-admin-token') || '';
+document.getElementById('saveToken').onclick = () => {
+  localStorage.setItem('mcmon-host-admin-token', adminTokenInput.value.trim());
+  authStatus.textContent = 'Saved';
+  refresh();
+};
+function apiFetch(url) {
+  const headers = {};
+  const token = localStorage.getItem('mcmon-host-admin-token') || adminTokenInput.value.trim();
+  if (token) headers.Authorization = 'Bearer ' + token;
+  return fetch(url, { headers }).then(async r => {
+    if (r.status === 401) {
+      authStatus.textContent = 'Token required';
+      throw new Error('unauthorized');
+    }
+    if (!r.ok) throw new Error(await r.text());
+    authStatus.textContent = token ? 'Authorized' : '';
+    return r.json();
+  });
+}
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark);
+  themeBtn.textContent = dark ? '☀️' : '🌙';
+  localStorage.setItem('mcmon-theme', dark ? 'dark' : 'light');
+}
+themeBtn.onclick = () => { applyTheme(!document.body.classList.contains('dark')); refresh(); };
+applyTheme(localStorage.getItem('mcmon-theme') === 'dark' || (!localStorage.getItem('mcmon-theme') && matchMedia('(prefers-color-scheme:dark)').matches));
+
+function chartColors() {
+  const dark = document.body.classList.contains('dark');
+  return {
+    band: dark ? 'rgba(140,120,255,0.15)' : 'rgba(100,80,200,0.12)',
+    bandBorder: dark ? 'rgba(140,120,255,0.3)' : 'rgba(100,80,200,0.25)',
+    median: dark ? '#8be98b' : '#00a040',
+    loss: dark ? 'rgba(255,80,80,0.5)' : 'rgba(220,40,40,0.4)',
+    grid: dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    tick: dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)',
+  };
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+const params = new URLSearchParams(location.search);
+const agentId = params.get('agent');
+const targetId = params.get('target');
+if (!agentId || !targetId) { location.href = '/'; }
+
+const ranges = ['1h','6h','12h','1d','7d','30d'];
+let currentRange = '1h';
+let chart = null;
+
+async function loadTarget() {
+  const [agents, targets] = await Promise.all([
+    apiFetch('/api/agents'),
+    apiFetch(`/api/agents/${encodeURIComponent(agentId)}/targets`),
+  ]);
+  const agentList = agents || [];
+  const targetList = targets || [];
+  const agent = agentList.find(a => a.id === agentId);
+  const target = targetList.find(t => t.target_id === targetId);
+
+  if (!target) {
+    document.getElementById('serverName').textContent = 'Server not found';
+    return;
+  }
+
+  document.title = (target.name || targetId) + ' - MCMon Host';
+  document.getElementById('serverName').textContent = target.name || targetId;
+  document.getElementById('serverHost').textContent = target.host + ':' + target.port;
+  document.getElementById('agentInfo').textContent = 'Agent: ' + (agent ? agent.name : agentId) + (agent && agent.online ? ' (online)' : ' (offline)');
+  document.getElementById('statusDot').className = 'dot ' + (agent && agent.online ? 'online' : 'offline');
+}
+
+function renderRangeButtons() {
+  const c = document.getElementById('rangeButtons');
+  c.innerHTML = '';
+  ranges.forEach(r => {
+    const b = document.createElement('button');
+    b.className = 'btn' + (r === currentRange ? ' active' : '');
+    b.textContent = r;
+    b.onclick = () => { currentRange = r; renderRangeButtons(); refresh(); };
+    c.appendChild(b);
+  });
+}
+
+document.getElementById('resetZoom').onclick = () => { if (chart) chart.resetZoom(); };
+
+async function refresh() {
+  let data;
+  try {
+    data = await apiFetch(`/api/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=${currentRange}`);
+  } catch (e) {
+    return;
+  }
+  const arr = data || [];
+
+  const last = arr.length ? arr[arr.length - 1] : null;
+  const isOnline = last && last.p50_ms != null && last.loss_pct < 1;
+
+  const statusEl = document.getElementById('statStatus');
+  statusEl.textContent = isOnline ? 'Online' : 'Offline';
+  statusEl.className = 'stat-value ' + (isOnline ? 'green' : 'red');
+
+  document.getElementById('statMedian').textContent = last && last.p50_ms != null ? last.p50_ms.toFixed(1) + ' ms' : '—';
+  document.getElementById('statMin').textContent = last && last.min_ms != null ? last.min_ms.toFixed(1) + ' ms' : '—';
+  document.getElementById('statMax').textContent = last && last.max_ms != null ? last.max_ms.toFixed(1) + ' ms' : '—';
+
+  const avgLoss = arr.length ? arr.reduce((s, d) => s + d.loss_pct, 0) / arr.length * 100 : 0;
+  const lossEl = document.getElementById('statLoss');
+  lossEl.textContent = avgLoss.toFixed(1) + '%';
+  lossEl.className = 'stat-value ' + (avgLoss < 1 ? 'green' : avgLoss < 10 ? '' : 'red');
+
+  document.getElementById('statSamples').textContent = arr.length;
+
+  const labels = arr.map(d => new Date(d.ts * 1000).toLocaleString());
+  const minD = arr.map(d => d.min_ms);
+  const p50 = arr.map(d => d.p50_ms);
+  const maxD = arr.map(d => d.max_ms);
+  const loss = arr.map(d => d.loss_pct * 100);
+
+  const cc = chartColors();
+  const ctx = document.getElementById('chart').getContext('2d');
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'max', data: maxD, borderColor: cc.bandBorder, backgroundColor: cc.band, fill: '+1', pointRadius: 0, borderWidth: 1, yAxisID: 'y' },
+        { label: 'min', data: minD, borderColor: cc.bandBorder, backgroundColor: cc.band, fill: false, pointRadius: 0, borderWidth: 1, yAxisID: 'y' },
+        { label: 'median', data: p50, borderColor: cc.median, borderWidth: 2, backgroundColor: 'transparent', pointRadius: 0, tension: 0.3, yAxisID: 'y' },
+        { label: 'loss %', data: loss, type: 'bar', backgroundColor: cc.loss, borderRadius: 2, yAxisID: 'y1' },
+      ]
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { color: cc.tick, maxTicksLimit: 14, font: { size: 11 } }, grid: { color: cc.grid } },
+        y: { title: { display: true, text: 'ms', color: cc.tick, font: { size: 12 } }, min: 0, ticks: { color: cc.tick, font: { size: 11 } }, grid: { color: cc.grid } },
+        y1: { position: 'right', min: 0, max: 100, title: { display: true, text: 'loss %', color: cc.tick, font: { size: 12 } }, ticks: { color: cc.tick, font: { size: 11 } }, grid: { drawOnChartArea: false } },
+      },
+      plugins: {
+        legend: { labels: { color: cc.tick, font: { size: 12 }, usePointStyle: true, pointStyle: 'circle' } },
+        tooltip: { backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 12 }, bodyFont: { size: 12 }, cornerRadius: 8, padding: 10 },
+        zoom: {
+          pan: { enabled: true, mode: 'x' },
+          zoom: {
+            wheel: { enabled: true, speed: 0.05 },
+            pinch: { enabled: true },
+            drag: { enabled: true, backgroundColor: 'rgba(100,80,200,0.08)', borderColor: 'rgba(100,80,200,0.3)', borderWidth: 1, modifierKey: 'shift' },
+            mode: 'x',
+          },
+        },
+      },
+    },
+  });
+}
+
+(async () => {
+  await loadTarget();
+  renderRangeButtons();
+  await refresh();
+  setInterval(refresh, 30000);
+})();
+</script>
+
+</body>
+</html>
