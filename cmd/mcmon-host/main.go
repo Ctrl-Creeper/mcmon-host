@@ -22,6 +22,7 @@ type Config struct {
 	DiscoveryKey     string `json:"discovery_key"`
 	AdminToken       string `json:"admin_token"`
 	WSAllowedOrigins string `json:"ws_allowed_origins,omitempty"`
+	PublicURL        string `json:"public_url,omitempty"`
 }
 
 func main() {
@@ -58,6 +59,7 @@ func main() {
 		DiscoveryKey:     cfg.DiscoveryKey,
 		AdminToken:       cfg.AdminToken,
 		WSAllowedOrigins: cfg.WSAllowedOrigins,
+		PublicURL:        cfg.PublicURL,
 	})
 
 	fmt.Printf("mcmon-host listening on %s\n", cfg.Listen)

@@ -29,7 +29,7 @@
   </div>
   <table>
     <thead>
-      <tr><th>Status</th><th>Name</th><th>ID</th><th>Version</th><th>Last seen</th><th>Targets</th></tr>
+      <tr><th>Status</th><th>Name</th><th>ID</th><th>Version</th><th>Last seen</th><th>Targets</th><th></th></tr>
     </thead>
     <tbody id="agentBody"></tbody>
   </table>
@@ -38,10 +38,29 @@
 
 <div class="card">
   <div class="card-header">
-    <h2>Setup</h2>
+    <h2>Create node</h2>
   </div>
-  <p class="muted" style="margin-bottom:12px;">To register a new agent, run <code>mcmon-agent</code> with your discovery key. The agent will auto-register and start sending data.</p>
-  <p class="muted">Discovery endpoint: <code>POST /api/discover</code> with header <code>Authorization: Bearer &lt;discovery_key&gt;</code></p>
+  <div class="row" style="margin-bottom:12px;">
+    <label>Name<input type="text" id="newName" placeholder="Tokyo Node"></label>
+    <button class="btn primary" id="createAgent">Create</button>
+  </div>
+  <div class="err" id="createErr"></div>
+</div>
+
+<div class="card" id="configCard" style="display:none;">
+  <div class="card-header">
+    <h2 id="configTitle">Node config</h2>
+  </div>
+  <p class="muted" style="margin-bottom:10px;">Targets are configured on the host. Re-run the generated install command to overwrite a running agent.</p>
+  <textarea id="targetsJson" style="width:100%;min-height:260px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;"></textarea>
+  <div class="row" style="margin-top:12px;">
+    <button class="btn primary" id="saveTargets">Save targets</button>
+    <button class="btn" id="copyInstall">Copy Linux/macOS install</button>
+    <button class="btn" id="copyWindowsInstall">Copy Windows install</button>
+  </div>
+  <pre id="installCmd" style="white-space:pre-wrap;margin-top:12px;"></pre>
+  <div class="err" id="configErr"></div>
+  <div class="ok" id="configOk"></div>
 </div>
 
 </div>
@@ -56,11 +75,12 @@ document.getElementById('saveToken').onclick = () => {
   authStatus.textContent = 'Saved';
   loadAgents();
 };
-function apiFetch(url) {
+function apiFetch(url, opts = {}) {
   const headers = {};
   const token = localStorage.getItem('mcmon-host-admin-token') || adminTokenInput.value.trim();
   if (token) headers.Authorization = 'Bearer ' + token;
-  return fetch(url, { headers }).then(async r => {
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  return fetch(url, { ...opts, headers }).then(async r => {
     if (r.status === 401) {
       authStatus.textContent = 'Token required';
       throw new Error('unauthorized');
@@ -118,9 +138,83 @@ async function loadAgents() {
       <td>${esc(a.version || '—')}</td>
       <td>${a.last_seen ? new Date(a.last_seen * 1000).toLocaleString() : '—'}</td>
       <td>${targetNames}</td>
+      <td><button class="btn ghost" data-config="${a.id}">Configure</button></td>
     </tr>`;
   }).join('');
+  body.querySelectorAll('[data-config]').forEach(b => b.onclick = () => openConfig(b.dataset.config, agents.find(a => a.id === b.dataset.config), targetsByAgent[b.dataset.config] || []));
 }
+
+function defaultTarget() {
+  return {
+    target_id: 'server-1',
+    name: 'Minecraft Server',
+    host: 'mc.example.com',
+    port: 25565,
+    timeout_ms: 1500,
+    monitors: {
+      online: { enabled: true, interval_sec: 60 },
+      players: { enabled: true, interval_sec: 60 },
+      latency: { enabled: true, interval_sec: 60, probes_per_burst: 5, probe_gap_ms: 1500, protocol_version: 760 },
+      loss: { enabled: true, interval_sec: 60, probes_per_burst: 5, probe_gap_ms: 1500 }
+    }
+  };
+}
+
+async function openConfig(id, agent, targets) {
+  window.currentAgentId = id;
+  window.currentAgent = agent;
+  document.getElementById('configCard').style.display = '';
+  document.getElementById('configTitle').textContent = `Node config · ${agent ? agent.name : id}`;
+  document.getElementById('targetsJson').value = JSON.stringify(targets.length ? targets : [defaultTarget()], null, 2);
+  document.getElementById('installCmd').textContent = installCommand(id, agent);
+  document.getElementById('configErr').textContent = '';
+  document.getElementById('configOk').textContent = '';
+  document.getElementById('configCard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function installCommand(id, agent) {
+  const origin = location.origin;
+  return `curl -fsSL '${origin}/api/agents/${encodeURIComponent(id)}/install.sh?token=${encodeURIComponent(agent.install_token || '<install-token-hidden>')}' | sudo sh`;
+}
+function windowsInstallCommand(id, agent) {
+  const origin = location.origin;
+  return `powershell -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing '${origin}/api/agents/${encodeURIComponent(id)}/install.ps1?token=${encodeURIComponent(agent.install_token || '<install-token-hidden>')}' | iex"`;
+}
+
+document.getElementById('createAgent').onclick = async () => {
+  document.getElementById('createErr').textContent = '';
+  const name = document.getElementById('newName').value.trim();
+  if (!name) { document.getElementById('createErr').textContent = 'Name is required.'; return; }
+  try {
+    await apiFetch('/api/agents', { method: 'POST', body: JSON.stringify({ name, targets: [defaultTarget()] }) });
+    document.getElementById('newName').value = '';
+    await loadAgents();
+  } catch (e) {
+    document.getElementById('createErr').textContent = e.message;
+  }
+};
+
+document.getElementById('saveTargets').onclick = async () => {
+  document.getElementById('configErr').textContent = '';
+  document.getElementById('configOk').textContent = '';
+  try {
+    const targets = JSON.parse(document.getElementById('targetsJson').value);
+    await apiFetch(`/api/agents/${encodeURIComponent(window.currentAgentId)}/targets`, { method: 'PUT', body: JSON.stringify(targets) });
+    document.getElementById('configOk').textContent = 'Targets saved. Re-run the install command to overwrite the agent config.';
+    await loadAgents();
+  } catch (e) {
+    document.getElementById('configErr').textContent = e.message;
+  }
+};
+
+document.getElementById('copyInstall').onclick = async () => {
+  await navigator.clipboard.writeText(document.getElementById('installCmd').textContent);
+  document.getElementById('configOk').textContent = 'Linux/macOS install command copied.';
+};
+document.getElementById('copyWindowsInstall').onclick = async () => {
+  await navigator.clipboard.writeText(windowsInstallCommand(window.currentAgentId, window.currentAgent));
+  document.getElementById('configOk').textContent = 'Windows install command copied.';
+};
 
 loadAgents();
 setInterval(loadAgents, 15000);

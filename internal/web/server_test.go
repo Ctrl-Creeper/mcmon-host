@@ -85,6 +85,27 @@ func TestAgentV2RPCAcceptsBearerTokenAndStoresPingResult(t *testing.T) {
 	}
 }
 
+func TestAgentV2RPCAcceptsMetricResult(t *testing.T) {
+	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+	body := []byte(`{"jsonrpc":"2.0","id":"1","method":"agent.metricResult","params":{"target_id":"target-1","metric":"players","ts":12345,"value":12,"extra":"{\"max\":40}"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/v2/rpc", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer agent-token")
+	rr := httptest.NewRecorder()
+
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("v2 metric rpc status = %d, want %d: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	series, err := st.MetricSeries("agent-1", "target-1", "players", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Value == nil || *series[0].Value != 12 {
+		t.Fatalf("stored metric series = %#v, want one value=12 sample", series)
+	}
+}
+
 func TestAgentV2RPCRejectsInvalidPingPayload(t *testing.T) {
 	_, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
 	body := []byte(`{"jsonrpc":"2.0","id":"1","method":"agent.pingResult","params":{"target_id":"","ts":12345,"loss_pct":2}}`)

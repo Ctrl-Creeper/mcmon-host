@@ -131,6 +131,8 @@ func (h *Hub) handleMessage(c *conn, raw []byte) {
 		h.onHello(c, req)
 	case "agent.pingResult":
 		h.onPingResult(c, req)
+	case "agent.metricResult":
+		h.onMetricResult(c, req)
 	default:
 		resp, _ := rpc.ErrResponse(req.ID, -32601, "unknown method")
 		c.ws.WriteMessage(websocket.TextMessage, resp)
@@ -150,10 +152,44 @@ func (h *Hub) HandleRPC(agent store.Agent, raw []byte) ([]byte, int) {
 	case "agent.pingResult":
 		resp := h.onPingResultRequest(&conn{agent: agent}, req)
 		return resp, statusFromRPC(resp)
+	case "agent.metricResult":
+		resp := h.onMetricResultRequest(&conn{agent: agent}, req)
+		return resp, statusFromRPC(resp)
 	default:
 		resp, _ := rpc.ErrResponse(req.ID, -32601, "unknown method")
 		return resp, 400
 	}
+}
+
+func (h *Hub) onMetricResult(c *conn, req rpc.Request) {
+	resp := h.onMetricResultRequest(c, req)
+	if c.ws != nil && req.ID != nil {
+		c.ws.WriteMessage(websocket.TextMessage, resp)
+	}
+}
+
+func (h *Hub) onMetricResultRequest(c *conn, req rpc.Request) []byte {
+	var mr rpc.MetricResult
+	if err := json.Unmarshal(req.Params, &mr); err != nil {
+		log.Printf("agent %s: bad metricResult: %v", c.agent.ID, err)
+		resp, _ := rpc.ErrResponse(req.ID, -32602, "invalid metricResult params")
+		return resp
+	}
+	if err := validateMetricResult(mr); err != nil {
+		resp, _ := rpc.ErrResponse(req.ID, -32602, err.Error())
+		return resp
+	}
+	sm := store.MetricSample{
+		AgentID: c.agent.ID, TargetID: mr.TargetID, Metric: mr.Metric, Ts: mr.Ts, Value: mr.Value, Extra: mr.Extra,
+	}
+	if err := h.st.InsertMetricSample(sm); err != nil {
+		log.Printf("agent %s: insert metric sample: %v", c.agent.ID, err)
+		resp, _ := rpc.ErrResponse(req.ID, -32000, "failed to save metric sample")
+		return resp
+	}
+	_ = h.st.TouchAgent(c.agent.ID, c.agent.Version, time.Now().Unix())
+	resp, _ := rpc.OKResponse(req.ID, "ok")
+	return resp
 }
 
 func (h *Hub) onHello(c *conn, req rpc.Request) {
@@ -269,6 +305,27 @@ func validatePingResult(pr rpc.PingResult) error {
 		if v != nil && (*v < 0 || math.IsNaN(*v) || math.IsInf(*v, 0)) {
 			return errors.New("latency values must be finite and non-negative")
 		}
+	}
+	return nil
+}
+
+func validateMetricResult(mr rpc.MetricResult) error {
+	if mr.TargetID == "" || len(mr.TargetID) > 128 {
+		return errors.New("target_id is required")
+	}
+	switch mr.Metric {
+	case "online", "players", "latency", "loss":
+	default:
+		return errors.New("metric is invalid")
+	}
+	if mr.Ts <= 0 {
+		return errors.New("ts is required")
+	}
+	if mr.Value != nil && (*mr.Value < 0 || math.IsNaN(*mr.Value) || math.IsInf(*mr.Value, 0)) {
+		return errors.New("value must be finite and non-negative")
+	}
+	if len(mr.Extra) > 4096 {
+		return errors.New("extra is too large")
 	}
 	return nil
 }

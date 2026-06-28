@@ -50,7 +50,7 @@ func ErrResponse(id any, code int, msg string) ([]byte, error) {
 // AgentHello is sent right after WebSocket connect so the host knows
 // what this agent is and what MC servers it monitors.
 type AgentHello struct {
-	Version string       `json:"version"`
+	Version string        `json:"version"`
 	Targets []AgentTarget `json:"targets"`
 }
 
@@ -69,6 +69,14 @@ type PingResult struct {
 	P50Ms    *float64 `json:"p50_ms"`
 	MaxMs    *float64 `json:"max_ms"`
 	LossPct  float64  `json:"loss_pct"`
+}
+
+type MetricResult struct {
+	TargetID string   `json:"target_id"`
+	Metric   string   `json:"metric"`
+	Ts       int64    `json:"ts"`
+	Value    *float64 `json:"value"`
+	Extra    string   `json:"extra,omitempty"`
 }
 
 // AutoDiscoverResp is returned by the host when an agent registers.

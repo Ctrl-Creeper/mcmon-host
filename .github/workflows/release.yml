@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build host release assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build Linux release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          build() {
+            local goarch="$1"
+            local output="dist/mcmon-host-linux-${goarch}"
+            echo "Building ${output}"
+            GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags="-s -w" \
+              -o "$output" \
+              ./cmd/mcmon-host
+          }
+
+          build amd64
+          build arm64
+
+          (cd dist && sha256sum * > checksums.txt)
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

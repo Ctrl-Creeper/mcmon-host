@@ -23,6 +23,7 @@ type Options struct {
 	DiscoveryKey     string
 	AdminToken       string
 	WSAllowedOrigins string
+	PublicURL        string
 }
 
 var rangeToSeconds = map[string]int64{
@@ -130,7 +131,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 		}
 		agentID := randHex(8)
 		token := randHex(16)
-		if err := st.CreateAgent(store.Agent{ID: agentID, Name: name, Token: token}); err != nil {
+		if err := st.CreateAgent(store.Agent{ID: agentID, Name: name, Token: token, InstallToken: randHex(16)}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -144,26 +145,59 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 		if !requireAdmin(w, r, opts.AdminToken) {
 			return
 		}
-		agents, err := st.ListAgents()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		switch r.Method {
+		case http.MethodGet:
+			agents, err := st.ListAgents()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			type agentInfo struct {
+				store.Agent
+				Online       bool   `json:"online"`
+				InstallToken string `json:"install_token"`
+			}
+			out := make([]agentInfo, len(agents))
+			for i, a := range agents {
+				out[i] = agentInfo{Agent: a, Online: h.IsOnline(a.ID), InstallToken: a.InstallToken}
+			}
+			writeJSON(w, out)
+		case http.MethodPost:
+			var body struct {
+				Name    string              `json:"name"`
+				Targets []store.AgentTarget `json:"targets"`
+			}
+			if !decodeJSON(w, r, &body) {
+				return
+			}
+			if strings.TrimSpace(body.Name) == "" {
+				http.Error(w, "name is required", http.StatusBadRequest)
+				return
+			}
+			agent := store.Agent{ID: randHex(8), Name: body.Name, Token: randHex(16), InstallToken: randHex(16)}
+			if err := st.CreateAgent(agent); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if len(body.Targets) > 0 {
+				for i := range body.Targets {
+					body.Targets[i].AgentID = agent.ID
+					if body.Targets[i].TargetID == "" {
+						body.Targets[i].TargetID = randHex(8)
+					}
+				}
+				if err := st.UpsertTargets(agent.ID, body.Targets); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+			writeJSON(w, agent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-		type agentInfo struct {
-			store.Agent
-			Online bool `json:"online"`
-		}
-		out := make([]agentInfo, len(agents))
-		for i, a := range agents {
-			out[i] = agentInfo{Agent: a, Online: h.IsOnline(a.ID)}
-		}
-		writeJSON(w, out)
 	})
 
 	mux.HandleFunc("/api/agents/", func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, opts.AdminToken) {
-			return
-		}
 		// /api/agents/{agentID}/targets
 		path := strings.TrimPrefix(r.URL.Path, "/api/agents/")
 		parts := strings.SplitN(path, "/", 2)
@@ -174,14 +208,53 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 		}
 
 		switch sub {
-		case "targets":
-			targets, err := st.TargetsForAgent(agentID)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+		case "install.sh":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
-			writeJSON(w, targets)
+			writeInstallScript(w, r, st, agentID, opts)
+		case "install.ps1":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			writeInstallPowerShell(w, r, st, agentID, opts)
+		case "targets":
+			if !requireAdmin(w, r, opts.AdminToken) {
+				return
+			}
+			switch r.Method {
+			case http.MethodGet:
+				targets, err := st.TargetsForAgent(agentID)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				writeJSON(w, targets)
+			case http.MethodPut:
+				var targets []store.AgentTarget
+				if !decodeJSON(w, r, &targets) {
+					return
+				}
+				for i := range targets {
+					targets[i].AgentID = agentID
+					if targets[i].TargetID == "" {
+						targets[i].TargetID = randHex(8)
+					}
+				}
+				if err := st.UpsertTargets(agentID, targets); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				writeJSON(w, targets)
+			default:
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
 		default:
+			if !requireAdmin(w, r, opts.AdminToken) {
+				return
+			}
 			http.Error(w, "not found", http.StatusNotFound)
 		}
 	})
@@ -218,7 +291,42 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 		writeJSON(w, series)
 	})
 
+	mux.HandleFunc("/api/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if !requireAdmin(w, r, opts.AdminToken) {
+			return
+		}
+		agentID := r.URL.Query().Get("agent")
+		targetID := r.URL.Query().Get("target")
+		metric := r.URL.Query().Get("metric")
+		if agentID == "" || targetID == "" || metric == "" {
+			http.Error(w, "agent, target and metric are required", http.StatusBadRequest)
+			return
+		}
+		rangeKey := r.URL.Query().Get("range")
+		secs, ok := rangeToSeconds[rangeKey]
+		if !ok {
+			secs = 3600
+		}
+		since := time.Now().Unix() - secs
+		series, err := st.MetricSeries(agentID, targetID, metric, since)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, series)
+	})
+
 	return mux
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 
 func requireAdmin(w http.ResponseWriter, r *http.Request, adminToken string) bool {
