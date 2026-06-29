@@ -27,7 +27,7 @@ func TestInstallScriptUsesInstallTokenAndImmutableConfig(t *testing.T) {
 	}
 	body := rr.Body.String()
 	for _, want := range []string{
-		"Ctrl-Creeper/mcmon-agent",
+		"YOUR_PATH/mcmon-agent",
 		"--host-url 'https://host.example.com'",
 		"--token 'agent-token'",
 		"--config-base64 '",

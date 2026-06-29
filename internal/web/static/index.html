@@ -79,6 +79,7 @@ function chartColors() {
     bandBorder: dark ? 'rgba(140,120,255,0.3)' : 'rgba(100,80,200,0.25)',
     median: dark ? '#8be98b' : '#00a040',
     grid: dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    tick: dark ? 'rgba(255,255,255,0.42)' : 'rgba(0,0,0,0.42)',
   };
 }
 
@@ -165,7 +166,7 @@ async function loadMiniChart(agentId, targetId) {
   miniCharts[key] = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: {
-      labels: arr.map(d => ''),
+      labels: arr.map(d => new Date(d.ts * 1000).toLocaleTimeString()),
       datasets: [{
         data: arr.map(d => d.p50_ms),
         borderColor: cc.median,
@@ -179,12 +180,26 @@ async function loadMiniChart(agentId, targetId) {
       animation: false,
       responsive: true,
       plugins: { legend: { display: false }, tooltip: { enabled: false } },
-      scales: {
-        x: { display: false },
-        y: { display: false, min: 0 },
-      },
+      scales: latencyThumbnailScales(cc),
     },
   });
+}
+
+function latencyThumbnailScales(cc) {
+  return {
+    x: {
+      display: true,
+      grid: { display: false },
+      ticks: { color: cc.tick, maxTicksLimit: 3, maxRotation: 0, autoSkip: true, font: { size: 10 } },
+    },
+    y: {
+      display: true,
+      min: 0,
+      grid: { color: cc.grid, drawTicks: false },
+      border: { display: false },
+      ticks: { color: cc.tick, maxTicksLimit: 3, font: { size: 10 }, callback: value => `${Math.round(Number(value))}ms` },
+    },
+  };
 }
 
 loadAll();

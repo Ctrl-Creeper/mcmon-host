@@ -51,7 +51,7 @@ locations.
 installation. The installer downloads assets from:
 
 ```text
-https://github.com/Ctrl-Creeper/mcmon-agent/releases
+https://github.com/YOUR_PATH/mcmon-agent/releases
 ```
 
 ## Run From Source

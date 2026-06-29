@@ -1,4 +1,4 @@
-module github.com/lewiswu/mcmon-host
+module github.com/YOUR_PATH/mcmon-host
 
 go 1.25.4
 

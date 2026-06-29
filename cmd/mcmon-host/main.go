@@ -11,9 +11,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lewiswu/mcmon-host/internal/hub"
-	"github.com/lewiswu/mcmon-host/internal/store"
-	"github.com/lewiswu/mcmon-host/internal/web"
+	"github.com/YOUR_PATH/mcmon-host/internal/hub"
+	"github.com/YOUR_PATH/mcmon-host/internal/store"
+	"github.com/YOUR_PATH/mcmon-host/internal/web"
 )
 
 type Config struct {

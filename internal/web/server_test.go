@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/YOUR_PATH/mcmon-host/internal/hub"
+	"github.com/YOUR_PATH/mcmon-host/internal/store"
 	"github.com/gorilla/websocket"
-	"github.com/lewiswu/mcmon-host/internal/hub"
-	"github.com/lewiswu/mcmon-host/internal/store"
 )
 
 func newTestServer(t *testing.T, opts Options) (*store.Store, *http.ServeMux) {

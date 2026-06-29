@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/YOUR_PATH/mcmon-host/internal/rpc"
+	"github.com/YOUR_PATH/mcmon-host/internal/store"
 	"github.com/gorilla/websocket"
-	"github.com/lewiswu/mcmon-host/internal/rpc"
-	"github.com/lewiswu/mcmon-host/internal/store"
 )
 
 const (

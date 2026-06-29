@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YOUR_PATH/mcmon-host/internal/hub"
+	"github.com/YOUR_PATH/mcmon-host/internal/store"
 	"github.com/gorilla/websocket"
-	"github.com/lewiswu/mcmon-host/internal/hub"
-	"github.com/lewiswu/mcmon-host/internal/store"
 )
 
 //go:embed static
