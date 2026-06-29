@@ -51,7 +51,7 @@ locations.
 installation. The installer downloads assets from:
 
 ```text
-https://github.com/YOUR_PATH/mcmon-agent/releases
+https://github.com/Ctrl-Creeper/mcmon-agent/releases
 ```
 
 ## Run From Source
@@ -81,13 +81,13 @@ Production host deployment is Linux-only. The recommended default layout is:
 Install with the one-line systemd installer:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-host/main/install.sh | sudo sh -s -- install --public-url https://monitor.example.com
+curl -fsSL https://raw.githubusercontent.com/Ctrl-Creeper/mcmon-host/main/install.sh | sudo sh -s -- install --public-url https://monitor.example.com
 ```
 
 Use a specific release tag:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-host/main/install.sh | sudo sh -s -- install --version v0.1.0 --public-url https://monitor.example.com
+curl -fsSL https://raw.githubusercontent.com/Ctrl-Creeper/mcmon-host/main/install.sh | sudo sh -s -- install --version v0.1.0 --public-url https://monitor.example.com
 ```
 
 Manage the service:
@@ -101,8 +101,8 @@ sudo systemctl restart mcmon-host
 Upgrade or uninstall with the same installer:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-host/main/install.sh | sudo sh -s -- upgrade
-curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-host/main/install.sh | sudo sh -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/Ctrl-Creeper/mcmon-host/main/install.sh | sudo sh -s -- upgrade
+curl -fsSL https://raw.githubusercontent.com/Ctrl-Creeper/mcmon-host/main/install.sh | sudo sh -s -- uninstall
 ```
 
 `uninstall` removes the systemd service and binary, but keeps
@@ -269,59 +269,3 @@ Supported metric names:
 - `players`
 - `latency`
 - `loss`
-
-## Build
-
-Build for the current platform:
-
-```sh
-go build -o dist/mcmon-host ./cmd/mcmon-host
-```
-
-Linux release builds:
-
-```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/mcmon-host-linux-amd64 ./cmd/mcmon-host
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/mcmon-host-linux-arm64 ./cmd/mcmon-host
-```
-
-GitHub Actions release builds are defined in:
-
-```text
-.github/workflows/release.yml
-```
-
-Push a version tag to publish Linux release assets and the GHCR Docker image:
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Release assets are uploaded as:
-
-- `mcmon-host-linux-amd64`
-- `mcmon-host-linux-arm64`
-- `checksums.txt`
-
-Docker images are pushed to:
-
-```text
-ghcr.io/YOUR_PATH/mcmon-host
-```
-
-## Development Checks
-
-```sh
-go test ./...
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/mcmon-host-linux-amd64 ./cmd/mcmon-host
-```
-
-## Security Notes
-
-- Put `mcmon-host` behind HTTPS before installing remote agents over the
-  internet.
-- Keep `admin_token`, agent tokens, and install tokens private.
-- Use a reverse proxy for TLS, access control, and logs in production.
-- Set `public_url` to the externally reachable HTTPS URL so generated agent
-  configs do not point at `localhost`.
