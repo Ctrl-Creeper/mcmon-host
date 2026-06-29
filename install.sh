@@ -2,7 +2,7 @@
 set -eu
 
 SERVICE_NAME="mcmon-host"
-REPO="YOUR_PATH/mcmon-host"
+REPO="Ctrl-Creeper/mcmon-host"
 VERSION="latest"
 BIN_PATH="/usr/local/bin/mcmon-host"
 CONFIG_DIR="/etc/mcmon-host"
@@ -10,8 +10,6 @@ CONFIG_PATH="${CONFIG_DIR}/config.json"
 DATA_DIR="/var/lib/mcmon-host"
 DB_PATH="${DATA_DIR}/mcmon-host.db"
 LISTEN=":9090"
-PUBLIC_URL=""
-
 usage() {
   cat <<EOF
 Usage: sudo sh install.sh [command] [options]
@@ -28,7 +26,6 @@ Options:
   --version VERSION       Release tag to install. Defaults to latest.
   --repo OWNER/REPO       GitHub repo for release downloads. Defaults to ${REPO}.
   --listen ADDR          HTTP listen address for a new config. Defaults to ${LISTEN}.
-  --public-url URL       Public URL for generated agent configs.
 EOF
 }
 
@@ -44,7 +41,6 @@ while [ "$#" -gt 0 ]; do
     --version) VERSION="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --listen) LISTEN="$2"; shift 2 ;;
-    --public-url) PUBLIC_URL="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -93,8 +89,7 @@ ensure_config() {
   "listen": "${LISTEN}",
   "db_path": "${DB_PATH}",
   "discovery_key": "${discovery_key}",
-  "admin_token": "${admin_token}",
-  "public_url": "${PUBLIC_URL}"
+  "admin_token": "${admin_token}"
 }
 EOF
     chmod 0600 "$CONFIG_PATH"

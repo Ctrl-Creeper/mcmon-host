@@ -11,9 +11,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/YOUR_PATH/mcmon-host/internal/hub"
-	"github.com/YOUR_PATH/mcmon-host/internal/store"
-	"github.com/YOUR_PATH/mcmon-host/internal/web"
+	"github.com/Ctrl-Creeper/mcmon-host/internal/hub"
+	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
+	"github.com/Ctrl-Creeper/mcmon-host/internal/web"
 )
 
 type Config struct {

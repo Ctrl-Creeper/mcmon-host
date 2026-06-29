@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YOUR_PATH/mcmon-host/internal/hub"
-	"github.com/YOUR_PATH/mcmon-host/internal/store"
+	"github.com/Ctrl-Creeper/mcmon-host/internal/hub"
+	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
 	"github.com/gorilla/websocket"
 )
 

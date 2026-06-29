@@ -1,6 +1,6 @@
 services:
   mcmon-host:
-    image: ghcr.io/YOUR_PATH/mcmon-host:latest
+    image: ghcr.io/ctrl-creeper/mcmon-host:latest
     container_name: mcmon-host
     restart: unless-stopped
     ports:

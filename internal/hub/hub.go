@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/YOUR_PATH/mcmon-host/internal/rpc"
-	"github.com/YOUR_PATH/mcmon-host/internal/store"
+	"github.com/Ctrl-Creeper/mcmon-host/internal/rpc"
+	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
 	"github.com/gorilla/websocket"
 )
 

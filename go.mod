@@ -1,4 +1,4 @@
-module github.com/YOUR_PATH/mcmon-host
+module github.com/Ctrl-Creeper/mcmon-host
 
 go 1.25.4
 

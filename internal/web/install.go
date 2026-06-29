@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/YOUR_PATH/mcmon-host/internal/store"
+	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
 )
 
 type agentInstallConfig struct {
@@ -26,7 +26,7 @@ func writeInstallScript(w http.ResponseWriter, r *http.Request, st *store.Store,
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	fmt.Fprintf(w, `#!/bin/sh
 set -eu
-curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-agent/main/install.sh | sudo sh -s -- \
+curl -fsSL https://raw.githubusercontent.com/Ctrl-Creeper/mcmon-agent/main/install.sh | sudo sh -s -- \
   --host-url '%s' \
   --agent-id '%s' \
   --token '%s' \
@@ -43,7 +43,7 @@ func writeInstallPowerShell(w http.ResponseWriter, r *http.Request, st *store.St
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprintf(w, `$ErrorActionPreference = 'Stop'
 $installer = Join-Path $env:TEMP 'mcmon-agent-install.ps1'
-Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/YOUR_PATH/mcmon-agent/main/install.ps1' -OutFile $installer
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/Ctrl-Creeper/mcmon-agent/main/install.ps1' -OutFile $installer
 & $installer -HostUrl '%s' -AgentId '%s' -Token '%s' -ConfigBase64 '%s'
 `, psQuote(cfg.HostURL), psQuote(cfg.AgentID), psQuote(cfg.Token), psQuote(cfg.ConfigBase64))
 }
@@ -71,14 +71,7 @@ func buildAgentInstallPayload(w http.ResponseWriter, r *http.Request, st *store.
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return agentInstallPayload{}, false
 	}
-	hostURL := strings.TrimRight(opts.PublicURL, "/")
-	if hostURL == "" {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		hostURL = scheme + "://" + r.Host
-	}
+	hostURL := externalHostURL(r, opts.PublicURL)
 	cfg := agentInstallConfig{HostURL: hostURL, AgentID: agent.ID, Token: agent.Token, Targets: targets}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
@@ -95,4 +88,33 @@ func shellQuote(s string) string {
 
 func psQuote(s string) string {
 	return strings.ReplaceAll(s, `'`, `''`)
+}
+
+func externalHostURL(r *http.Request, override string) string {
+	if hostURL := strings.TrimRight(strings.TrimSpace(override), "/"); hostURL != "" {
+		return hostURL
+	}
+	scheme := firstForwardedValue(r.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = firstForwardedValue(r.Header.Get("X-Forwarded-Scheme"))
+	}
+	if scheme == "" {
+		scheme = "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+	}
+	host := firstForwardedValue(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	return strings.TrimRight(scheme+"://"+host, "/")
+}
+
+func firstForwardedValue(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	value := strings.Split(raw, ",")[0]
+	return strings.TrimSpace(value)
 }
