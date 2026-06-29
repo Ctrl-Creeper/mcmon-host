@@ -1,0 +1,9 @@
+services:
+  mcmon-host:
+    image: ghcr.io/YOUR_PATH/mcmon-host:latest
+    container_name: mcmon-host
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./data:/data

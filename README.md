@@ -69,6 +69,71 @@ The default dashboard is:
 http://localhost:9090
 ```
 
+## Deploy On Linux
+
+Production host deployment is Linux-only. The recommended default layout is:
+
+- Binary: `/usr/local/bin/mcmon-host`
+- Config: `/etc/mcmon-host/config.json`
+- Data: `/var/lib/mcmon-host/mcmon-host.db`
+- Service: `/etc/systemd/system/mcmon-host.service`
+
+Install with the one-line systemd installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-host/main/install.sh | sudo sh -s -- install --public-url https://monitor.example.com
+```
+
+Use a specific release tag:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-host/main/install.sh | sudo sh -s -- install --version v0.1.0 --public-url https://monitor.example.com
+```
+
+Manage the service:
+
+```sh
+systemctl status mcmon-host
+journalctl -u mcmon-host -f
+sudo systemctl restart mcmon-host
+```
+
+Upgrade or uninstall with the same installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-host/main/install.sh | sudo sh -s -- upgrade
+curl -fsSL https://raw.githubusercontent.com/YOUR_PATH/mcmon-host/main/install.sh | sudo sh -s -- uninstall
+```
+
+`uninstall` removes the systemd service and binary, but keeps
+`/etc/mcmon-host` and `/var/lib/mcmon-host`.
+
+## Docker
+
+Run the published image:
+
+```sh
+docker run -d \
+  --name mcmon-host \
+  --restart unless-stopped \
+  -p 9090:9090 \
+  -v mcmon-host-data:/data \
+  ghcr.io/YOUR_PATH/mcmon-host:latest
+```
+
+The container stores `config.json` and the SQLite database under `/data`.
+If `config.json` does not exist, `mcmon-host` creates it on first start.
+
+## Docker Compose
+
+Use the included `docker-compose.yml`:
+
+```sh
+docker compose up -d
+```
+
+The compose file stores data in `./data` beside the compose file.
+
 ## Configuration
 
 Example `config.json`:
@@ -226,11 +291,23 @@ GitHub Actions release builds are defined in:
 .github/workflows/release.yml
 ```
 
-Push a version tag to publish release assets:
+Push a version tag to publish Linux release assets and the GHCR Docker image:
 
 ```sh
 git tag v0.1.0
 git push origin v0.1.0
+```
+
+Release assets are uploaded as:
+
+- `mcmon-host-linux-amd64`
+- `mcmon-host-linux-arm64`
+- `checksums.txt`
+
+Docker images are pushed to:
+
+```text
+ghcr.io/YOUR_PATH/mcmon-host
 ```
 
 ## Development Checks
