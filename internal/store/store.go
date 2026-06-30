@@ -9,7 +9,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const defaultProtocolVersion = 760
+const (
+	defaultProtocolVersion = 760
+
+	// maxSeriesRows caps any single series query. At 1s probe intervals this
+	// covers ~14 hours; longer ranges return the most recent N rows so the
+	// browser and JSON encoder don't blow up on a 30d window.
+	maxSeriesRows = 50000
+)
 
 type Agent struct {
 	ID           string `json:"id"`
@@ -237,6 +244,32 @@ func (s *Store) AgentByInstallToken(token string) (Agent, bool, error) {
 	return a, err == nil, err
 }
 
+// ConsumeInstallToken clears the install_token for the given agent so it
+// cannot be reused. Returns false if the token was already consumed (race),
+// in which case the caller should treat the install attempt as invalid.
+func (s *Store) ConsumeInstallToken(agentID, token string) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE agents SET install_token='' WHERE id=? AND install_token=? AND install_token<>''`,
+		agentID, token,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// RotateInstallToken assigns a fresh install_token to an agent — used by
+// the admin UI to re-issue a one-time installer URL after the previous
+// token was consumed.
+func (s *Store) RotateInstallToken(agentID, newToken string) error {
+	_, err := s.db.Exec(`UPDATE agents SET install_token=? WHERE id=?`, newToken, agentID)
+	return err
+}
+
 func (s *Store) ListAgents() ([]Agent, error) {
 	rows, err := s.db.Query(`SELECT id, name, token, install_token, version, last_seen, disabled FROM agents ORDER BY name`)
 	if err != nil {
@@ -340,9 +373,14 @@ func (s *Store) InsertMetricSample(sm MetricSample) error {
 }
 
 func (s *Store) MetricSeries(agentID, targetID, metric string, sinceTs int64) ([]MetricSample, error) {
+	// Pull the most-recent maxSeriesRows in DESC order, then reverse to
+	// chronological for the caller. SQLite optimises ORDER BY DESC LIMIT
+	// via the (agent_id,target_id,metric,ts) PK so this stays cheap.
 	rows, err := s.db.Query(
-		`SELECT agent_id, target_id, metric, ts, value, extra FROM metric_samples WHERE agent_id=? AND target_id=? AND metric=? AND ts>=? ORDER BY ts`,
-		agentID, targetID, metric, sinceTs,
+		`SELECT agent_id, target_id, metric, ts, value, extra FROM metric_samples
+		 WHERE agent_id=? AND target_id=? AND metric=? AND ts>=?
+		 ORDER BY ts DESC LIMIT ?`,
+		agentID, targetID, metric, sinceTs, maxSeriesRows,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query metric series: %w", err)
@@ -356,7 +394,17 @@ func (s *Store) MetricSeries(agentID, targetID, metric string, sinceTs int64) ([
 		}
 		out = append(out, sm)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	reverseMetricSamples(out)
+	return out, nil
+}
+
+func reverseMetricSamples(s []MetricSample) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
 }
 
 // --- Samples ---
@@ -371,8 +419,10 @@ func (s *Store) InsertSample(sm Sample) error {
 
 func (s *Store) Series(agentID, targetID string, sinceTs int64) ([]Sample, error) {
 	rows, err := s.db.Query(
-		`SELECT agent_id, target_id, ts, min_ms, p50_ms, max_ms, loss_pct FROM samples WHERE agent_id=? AND target_id=? AND ts>=? ORDER BY ts`,
-		agentID, targetID, sinceTs,
+		`SELECT agent_id, target_id, ts, min_ms, p50_ms, max_ms, loss_pct FROM samples
+		 WHERE agent_id=? AND target_id=? AND ts>=?
+		 ORDER BY ts DESC LIMIT ?`,
+		agentID, targetID, sinceTs, maxSeriesRows,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query series: %w", err)
@@ -386,5 +436,15 @@ func (s *Store) Series(agentID, targetID string, sinceTs int64) ([]Sample, error
 		}
 		out = append(out, sm)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	reverseSamples(out)
+	return out, nil
+}
+
+func reverseSamples(s []Sample) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
 }

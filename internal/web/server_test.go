@@ -3,9 +3,11 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Ctrl-Creeper/mcmon-host/internal/hub"
 	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
@@ -66,7 +68,8 @@ func TestDiscoverStillUsesDiscoveryKey(t *testing.T) {
 
 func TestAgentV2RPCAcceptsBearerTokenAndStoresPingResult(t *testing.T) {
 	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
-	body := []byte(`{"jsonrpc":"2.0","id":"1","method":"agent.pingResult","params":{"target_id":"target-1","ts":12345,"min_ms":10,"p50_ms":12,"max_ms":15,"loss_pct":0}}`)
+	ts := time.Now().Unix()
+	body := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":"1","method":"agent.pingResult","params":{"target_id":"target-1","ts":%d,"min_ms":10,"p50_ms":12,"max_ms":15,"loss_pct":0}}`, ts))
 	req := httptest.NewRequest(http.MethodPost, "/api/agents/v2/rpc", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer agent-token")
 	rr := httptest.NewRecorder()
@@ -87,7 +90,8 @@ func TestAgentV2RPCAcceptsBearerTokenAndStoresPingResult(t *testing.T) {
 
 func TestAgentV2RPCAcceptsMetricResult(t *testing.T) {
 	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
-	body := []byte(`{"jsonrpc":"2.0","id":"1","method":"agent.metricResult","params":{"target_id":"target-1","metric":"players","ts":12345,"value":12,"extra":"{\"max\":40}"}}`)
+	ts := time.Now().Unix()
+	body := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":"1","method":"agent.metricResult","params":{"target_id":"target-1","metric":"players","ts":%d,"value":12,"extra":"{\"max\":40}"}}`, ts))
 	req := httptest.NewRequest(http.MethodPost, "/api/agents/v2/rpc", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer agent-token")
 	rr := httptest.NewRecorder()
@@ -108,7 +112,8 @@ func TestAgentV2RPCAcceptsMetricResult(t *testing.T) {
 
 func TestAgentV2RPCRejectsInvalidPingPayload(t *testing.T) {
 	_, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
-	body := []byte(`{"jsonrpc":"2.0","id":"1","method":"agent.pingResult","params":{"target_id":"","ts":12345,"loss_pct":2}}`)
+	ts := time.Now().Unix()
+	body := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":"1","method":"agent.pingResult","params":{"target_id":"","ts":%d,"loss_pct":2}}`, ts))
 	req := httptest.NewRequest(http.MethodPost, "/api/agents/v2/rpc", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer agent-token")
 	rr := httptest.NewRecorder()

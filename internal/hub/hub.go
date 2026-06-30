@@ -10,6 +10,7 @@ import (
 	"math"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/Ctrl-Creeper/mcmon-host/internal/rpc"
 	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
@@ -19,6 +20,12 @@ import (
 const (
 	heartbeatInterval = 30 * time.Second
 	readDeadline      = 90 * time.Second
+
+	// maxTsSkew bounds how far an incoming sample timestamp can be from
+	// server wall-clock. Generous enough for clock drift and brief NTP
+	// gaps, tight enough that a buggy or malicious agent can't poison
+	// history with year-2286 entries or backdate over old rows.
+	maxTsSkew = 24 * time.Hour
 )
 
 type ConnectedAgent struct {
@@ -278,8 +285,8 @@ func validateHello(hello rpc.AgentHello) error {
 		return errors.New("too many targets")
 	}
 	for _, t := range hello.Targets {
-		if t.ID == "" || len(t.ID) > 128 {
-			return errors.New("target id is required")
+		if !IsSafeID(t.ID) {
+			return errors.New("target id is required and must be [A-Za-z0-9_-]{1,128}")
 		}
 		if t.Host == "" || len(t.Host) > 255 {
 			return fmt.Errorf("target %s host is required", t.ID)
@@ -292,11 +299,11 @@ func validateHello(hello rpc.AgentHello) error {
 }
 
 func validatePingResult(pr rpc.PingResult) error {
-	if pr.TargetID == "" || len(pr.TargetID) > 128 {
-		return errors.New("target_id is required")
+	if !IsSafeID(pr.TargetID) {
+		return errors.New("target_id is required and must be [A-Za-z0-9_-]{1,128}")
 	}
-	if pr.Ts <= 0 {
-		return errors.New("ts is required")
+	if err := validateTs(pr.Ts); err != nil {
+		return err
 	}
 	if pr.LossPct < 0 || pr.LossPct > 1 || math.IsNaN(pr.LossPct) || math.IsInf(pr.LossPct, 0) {
 		return errors.New("loss_pct must be between 0 and 1")
@@ -310,22 +317,60 @@ func validatePingResult(pr rpc.PingResult) error {
 }
 
 func validateMetricResult(mr rpc.MetricResult) error {
-	if mr.TargetID == "" || len(mr.TargetID) > 128 {
-		return errors.New("target_id is required")
+	if !IsSafeID(mr.TargetID) {
+		return errors.New("target_id is required and must be [A-Za-z0-9_-]{1,128}")
 	}
 	switch mr.Metric {
 	case "online", "players", "latency", "loss":
 	default:
 		return errors.New("metric is invalid")
 	}
-	if mr.Ts <= 0 {
-		return errors.New("ts is required")
+	if err := validateTs(mr.Ts); err != nil {
+		return err
 	}
 	if mr.Value != nil && (*mr.Value < 0 || math.IsNaN(*mr.Value) || math.IsInf(*mr.Value, 0)) {
 		return errors.New("value must be finite and non-negative")
 	}
 	if len(mr.Extra) > 4096 {
 		return errors.New("extra is too large")
+	}
+	return nil
+}
+
+// IsSafeID reports whether s is safe to interpolate raw into HTML id="..."
+// attributes and shell command lines: it must be 1..128 characters of
+// [A-Za-z0-9_-]. This is enforced server-side so admin-supplied or
+// agent-supplied identifiers can't carry HTML/script payloads into the
+// dashboard or shell metacharacters into install scripts.
+func IsSafeID(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+		case r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validateTs ensures the supplied unix-seconds timestamp is positive and
+// within ±maxTsSkew of server wall-clock — protecting against year-2286
+// values and backdating attempts that would overwrite old samples.
+func validateTs(ts int64) error {
+	if ts <= 0 {
+		return errors.New("ts is required")
+	}
+	now := time.Now().Unix()
+	skew := ts - now
+	if skew < 0 {
+		skew = -skew
+	}
+	if time.Duration(skew)*time.Second > maxTsSkew {
+		return errors.New("ts is outside the allowed window")
 	}
 	return nil
 }

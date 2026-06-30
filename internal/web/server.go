@@ -2,6 +2,7 @@ package web
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,15 @@ import (
 	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
 	"github.com/gorilla/websocket"
 )
+
+// secureEqual compares two strings in constant time relative to length,
+// preventing token timing attacks. Returns false if either side is empty.
+func secureEqual(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
 
 //go:embed static
 var staticFS embed.FS
@@ -120,8 +130,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != opts.DiscoveryKey {
+		if !secureEqual(bearerToken(r), opts.DiscoveryKey) {
 			http.Error(w, "invalid discovery key", http.StatusUnauthorized)
 			return
 		}
@@ -185,6 +194,10 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 					if body.Targets[i].TargetID == "" {
 						body.Targets[i].TargetID = randHex(8)
 					}
+					if !hub.IsSafeID(body.Targets[i].TargetID) {
+						http.Error(w, "target_id must be [A-Za-z0-9_-]{1,128}", http.StatusBadRequest)
+						return
+					}
 				}
 				if err := st.UpsertTargets(agent.ID, body.Targets); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -220,6 +233,20 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 				return
 			}
 			writeInstallPowerShell(w, r, st, agentID, opts)
+		case "install-token":
+			if !requireAdmin(w, r, opts.AdminToken) {
+				return
+			}
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			newToken := randHex(16)
+			if err := st.RotateInstallToken(agentID, newToken); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]string{"install_token": newToken})
 		case "targets":
 			if !requireAdmin(w, r, opts.AdminToken) {
 				return
@@ -241,6 +268,10 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 					targets[i].AgentID = agentID
 					if targets[i].TargetID == "" {
 						targets[i].TargetID = randHex(8)
+					}
+					if !hub.IsSafeID(targets[i].TargetID) {
+						http.Error(w, "target_id must be [A-Za-z0-9_-]{1,128}", http.StatusBadRequest)
+						return
 					}
 				}
 				if err := st.UpsertTargets(agentID, targets); err != nil {
@@ -333,7 +364,7 @@ func requireAdmin(w http.ResponseWriter, r *http.Request, adminToken string) boo
 	if adminToken == "" {
 		return true
 	}
-	if bearerToken(r) == adminToken {
+	if secureEqual(bearerToken(r), adminToken) {
 		return true
 	}
 	http.Error(w, "unauthorized", http.StatusUnauthorized)

@@ -88,7 +88,15 @@ func saveConfig(path string, cfg Config) {
 		os.MkdirAll(dir, 0755)
 	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	os.WriteFile(path, data, 0600)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		log.Printf("save config: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		log.Printf("save config: rename: %v", err)
+	}
 }
 
 func randHex(n int) string {
