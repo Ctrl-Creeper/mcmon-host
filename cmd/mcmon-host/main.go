@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Ctrl-Creeper/mcmon-host/internal/hub"
 	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
@@ -34,7 +35,9 @@ func main() {
 		DBPath: "mcmon-host.db",
 	}
 	if data, err := os.ReadFile(*cfgPath); err == nil {
-		json.Unmarshal(data, &cfg)
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			log.Fatalf("parse config %s: %v", *cfgPath, err)
+		}
 	}
 
 	if cfg.DiscoveryKey == "" {
@@ -67,7 +70,14 @@ func main() {
 	fmt.Printf("admin token: %s\n", cfg.AdminToken)
 	fmt.Printf("dashboard: http://localhost%s\n", cfg.Listen)
 
-	if err := http.ListenAndServe(cfg.Listen, mux); err != nil {
+	srv := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// No ReadTimeout/WriteTimeout: WebSocket connections must stay open.
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

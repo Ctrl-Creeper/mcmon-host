@@ -187,7 +187,7 @@ func (h *Hub) onMetricResultRequest(c *conn, req rpc.Request) []byte {
 		resp, _ := rpc.ErrResponse(req.ID, -32000, "failed to save metric sample")
 		return resp
 	}
-	_ = h.st.TouchAgent(c.agent.ID, c.agent.Version, time.Now().Unix())
+	_ = h.st.TouchAgentSeen(c.agent.ID, time.Now().Unix())
 	resp, _ := rpc.OKResponse(req.ID, "ok")
 	return resp
 }
@@ -265,7 +265,7 @@ func (h *Hub) onPingResultRequest(c *conn, req rpc.Request) []byte {
 		resp, _ := rpc.ErrResponse(req.ID, -32000, "failed to save sample")
 		return resp
 	}
-	_ = h.st.TouchAgent(c.agent.ID, c.agent.Version, time.Now().Unix())
+	_ = h.st.TouchAgentSeen(c.agent.ID, time.Now().Unix())
 	resp, _ := rpc.OKResponse(req.ID, "ok")
 	return resp
 }

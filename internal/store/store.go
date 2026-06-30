@@ -259,6 +259,14 @@ func (s *Store) TouchAgent(agentID, version string, ts int64) error {
 	return err
 }
 
+// TouchAgentSeen updates only the last_seen timestamp without clobbering
+// the recorded agent version. Use this for non-hello RPCs where the caller
+// doesn't have a fresh version string.
+func (s *Store) TouchAgentSeen(agentID string, ts int64) error {
+	_, err := s.db.Exec(`UPDATE agents SET last_seen=? WHERE id=?`, ts, agentID)
+	return err
+}
+
 // --- Agent targets ---
 
 func (s *Store) UpsertTargets(agentID string, targets []AgentTarget) error {
