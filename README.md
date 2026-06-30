@@ -13,7 +13,7 @@ configuration workflow.
 
 MC Server Monitor can be used in two modes:
 
-- [mc-latency-monitor](https://github.com/Ctrl-Creeper/mc-latency-monitor): standalone desktop app for local monitoring. It can run
+- [mcmon](https://github.com/Ctrl-Creeper/mcmon): standalone desktop app for local monitoring. It can run
   without any host.
 - [mcmon-host](https://github.com/Ctrl-Creeper/mcmon-host): Linux-only central dashboard and API for managed monitoring.
 - [mcmon-agent](https://github.com/Ctrl-Creeper/mcmon-agent): lightweight cross-platform node process. It reports to
