@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
+<script src="/i18n.js" defer></script>
 </head>
 <body>
 
@@ -143,6 +144,7 @@ async function loadTarget() {
   document.getElementById('serverHost').textContent = target.host + ':' + target.port;
   document.getElementById('agentInfo').textContent = 'Agent: ' + (agent ? agent.name : agentId) + (agent && agent.online ? ' (online)' : ' (offline)');
   document.getElementById('statusDot').className = 'dot ' + (agent && agent.online ? 'online' : 'offline');
+  window.mcmonI18n?.apply();
 }
 
 function renderRangeButtons() {

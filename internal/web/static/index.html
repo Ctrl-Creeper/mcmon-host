@@ -6,6 +6,7 @@
 <title>MCMon Host - Dashboard</title>
 <link rel="stylesheet" href="/style.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="/i18n.js" defer></script>
 </head>
 <body>
 
@@ -139,6 +140,7 @@ async function loadAll() {
   if (targetList.length === 0) {
     grid.innerHTML = '<div class="muted" style="padding:24px;text-align:center;">No servers being monitored yet. Connect an agent to get started.</div>';
   }
+  window.mcmonI18n?.apply();
 }
 
 async function loadMiniChart(agentId, targetId) {

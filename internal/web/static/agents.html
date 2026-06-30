@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Agents - MCMon Host</title>
 <link rel="stylesheet" href="/style.css" />
+<script src="/i18n.js" defer></script>
 </head>
 <body>
 
@@ -142,6 +143,7 @@ async function loadAgents() {
     </tr>`;
   }).join('');
   body.querySelectorAll('[data-config]').forEach(b => b.onclick = () => openConfig(b.dataset.config, agents.find(a => a.id === b.dataset.config), targetsByAgent[b.dataset.config] || []));
+  window.mcmonI18n?.apply();
 }
 
 function defaultTarget() {
@@ -170,6 +172,7 @@ async function openConfig(id, agent, targets) {
   document.getElementById('configErr').textContent = '';
   document.getElementById('configOk').textContent = '';
   document.getElementById('configCard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  window.mcmonI18n?.apply();
 }
 
 function installCommand(id, agent) {

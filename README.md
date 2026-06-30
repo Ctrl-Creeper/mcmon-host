@@ -1,5 +1,7 @@
 # MCMon Host
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 MCMon Host is the central management server for MC Server Monitor deployments.
 It runs on Linux, stores metrics in SQLite, serves the web dashboard, and
 generates one-line install commands for remote `mcmon-agent` nodes.
