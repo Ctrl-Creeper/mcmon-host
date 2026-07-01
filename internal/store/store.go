@@ -244,27 +244,6 @@ func (s *Store) AgentByInstallToken(token string) (Agent, bool, error) {
 	return a, err == nil, err
 }
 
-// ConsumeInstallToken clears the install_token for the given agent so it
-// cannot be reused. Returns false if the token was already consumed (race),
-// in which case the caller should treat the install attempt as invalid.
-func (s *Store) ConsumeInstallToken(agentID, token string) (bool, error) {
-	res, err := s.db.Exec(
-		`UPDATE agents SET install_token='' WHERE id=? AND install_token=? AND install_token<>''`,
-		agentID, token,
-	)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
-// RotateInstallToken assigns a fresh install_token to an agent — used by
-// the admin UI to re-issue a one-time installer URL after the previous
-// token was consumed.
 func (s *Store) RotateInstallToken(agentID, newToken string) error {
 	_, err := s.db.Exec(`UPDATE agents SET install_token=? WHERE id=?`, newToken, agentID)
 	return err

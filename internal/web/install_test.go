@@ -40,6 +40,28 @@ func TestInstallScriptUsesInstallTokenAndImmutableConfig(t *testing.T) {
 	}
 }
 
+func TestInstallScriptCanBeFetchedMoreThanOnce(t *testing.T) {
+	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+
+	agent, ok, err := st.AgentByToken("agent-token")
+	if err != nil || !ok {
+		t.Fatalf("seed agent lookup ok=%v err=%v", ok, err)
+	}
+	agent.InstallToken = "install-token"
+	if err := st.UpdateAgent(agent); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "http://host.example.com/api/agents/agent-1/install.sh?token=install-token", nil)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("install script fetch %d status = %d, want 200: %s", i+1, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 func TestInstallPowerShellUsesInstallTokenAndImmutableConfig(t *testing.T) {
 	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
 

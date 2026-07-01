@@ -10,6 +10,69 @@ CONFIG_PATH="${CONFIG_DIR}/config.json"
 DATA_DIR="/var/lib/mcmon-host"
 DB_PATH="${DATA_DIR}/mcmon-host.db"
 LISTEN=":9090"
+
+print_host_summary() {
+  port="$(printf '%s' "$LISTEN" | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+  if [ -n "$port" ]; then
+    local_url="http://127.0.0.1:${port}"
+  else
+    local_url="http://127.0.0.1${LISTEN}"
+  fi
+
+  cat <<EOF
+
+mcmon-host is installed and running.
+
+Dashboard:
+  ${local_url}
+  If this server is behind a reverse proxy or public domain, open that external URL instead.
+
+Important files:
+  Binary:  ${BIN_PATH}
+  Config:  ${CONFIG_PATH}
+  Data:    ${DATA_DIR}
+  DB:      ${DB_PATH}
+  Service: /etc/systemd/system/${SERVICE_NAME}.service
+
+Admin login:
+  The dashboard admin token is stored in:
+    ${CONFIG_PATH}
+
+  View it with:
+    sudo grep '"admin_token"' ${CONFIG_PATH}
+
+Service commands:
+  Status:  systemctl status ${SERVICE_NAME} --no-pager -l
+  Logs:    journalctl -u ${SERVICE_NAME} -f
+  Restart: sudo systemctl restart ${SERVICE_NAME}
+
+Next steps:
+  1. Open the dashboard.
+  2. Paste the admin token from the config file.
+  3. Create an agent/node in Agents.
+  4. Copy the generated agent install command from the dashboard.
+
+EOF
+}
+
+print_upgrade_summary() {
+  cat <<EOF
+
+mcmon-host upgraded and restarted.
+
+Config:
+  ${CONFIG_PATH}
+
+Admin token:
+  sudo grep '"admin_token"' ${CONFIG_PATH}
+
+Service commands:
+  Status: systemctl status ${SERVICE_NAME} --no-pager -l
+  Logs:   journalctl -u ${SERVICE_NAME} -f
+
+EOF
+}
+
 usage() {
   cat <<EOF
 Usage: sudo sh install.sh [command] [options]
@@ -139,10 +202,7 @@ install_host() {
   write_service
   systemctl daemon-reload
   systemctl enable --now "${SERVICE_NAME}.service"
-  echo "mcmon-host installed."
-  echo "Config: ${CONFIG_PATH}"
-  echo "Data: ${DATA_DIR}"
-  echo "Service: systemctl status ${SERVICE_NAME}"
+  print_host_summary
 }
 
 upgrade_host() {
@@ -150,7 +210,7 @@ upgrade_host() {
   require_systemd
   install_binary
   systemctl restart "${SERVICE_NAME}.service"
-  echo "mcmon-host upgraded and restarted."
+  print_upgrade_summary
 }
 
 uninstall_host() {

@@ -66,19 +66,6 @@ func buildAgentInstallPayload(w http.ResponseWriter, r *http.Request, st *store.
 		http.Error(w, "invalid install token", http.StatusUnauthorized)
 		return agentInstallPayload{}, false
 	}
-	// Atomically consume the token before disclosing the agent token in the
-	// response. If two requests race, only one wins and the other gets 401 —
-	// preventing replay of a captured install URL from server logs or
-	// browser history.
-	consumed, err := st.ConsumeInstallToken(agent.ID, token)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return agentInstallPayload{}, false
-	}
-	if !consumed {
-		http.Error(w, "install token already used", http.StatusUnauthorized)
-		return agentInstallPayload{}, false
-	}
 	targets, err := st.TargetsForAgent(agent.ID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
