@@ -62,8 +62,9 @@ https://github.com/Ctrl-Creeper/mcmon-agent/releases
 go run ./cmd/mcmon-host -config config.json
 ```
 
-On first run, the host generates `discovery_key` and `admin_token` if they are
-missing, saves them to the config file, and prints them to the terminal.
+On first run, the host creates the single admin account if needed. The default
+username is `admin`; the generated password is printed once to the terminal log.
+The host still keeps a legacy `admin_token` in the config for compatibility.
 
 The default dashboard is:
 
@@ -159,7 +160,8 @@ Fields:
 - `listen`: HTTP listen address.
 - `db_path`: SQLite database path.
 - `discovery_key`: bearer token for legacy/automatic agent discovery.
-- `admin_token`: bearer token for dashboard and admin API access.
+- `admin_token`: legacy bearer token fallback for admin API compatibility.
+  Dashboard and desktop app login use username/password sessions instead.
 - `public_url`: optional advanced override for the agent endpoint. Most
   deployments should leave it empty and let the dashboard/API infer the
   endpoint from the current request.
@@ -169,16 +171,19 @@ Fields:
 ## Dashboard Workflow
 
 1. Start `mcmon-host`.
-2. Open the dashboard and enter the `admin_token`.
+2. Open the dashboard and sign in with the admin username and password.
 3. Go to `Agents`.
 4. Create a node.
-5. Configure its targets and monitor settings.
+5. Configure its targets and monitor settings from the modal form.
 6. Copy the generated install command from the dashboard.
 7. Run the command on the target machine.
 
 To change an existing agent, update the node configuration in the host dashboard
 and rerun the generated install command. On Linux, you can also stop the agent
 manually with `systemctl` before reinstalling.
+
+To remove an agent, use the delete action on the `Agents` page. This removes the
+agent record, configured targets, and stored metric history from the host.
 
 ## Target Configuration
 
@@ -250,6 +255,7 @@ Main endpoints:
 
 - `GET /api/agents`
 - `POST /api/agents`
+- `DELETE /api/agents/{id}`
 - `GET /api/agents/{id}/targets`
 - `PUT /api/agents/{id}/targets`
 - `GET /api/agents/{id}/install.sh?token=...`

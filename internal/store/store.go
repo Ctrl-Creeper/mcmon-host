@@ -2,10 +2,14 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
 
@@ -26,6 +30,21 @@ type Agent struct {
 	Version      string `json:"version,omitempty"`
 	LastSeen     int64  `json:"last_seen,omitempty"`
 	Disabled     bool   `json:"disabled,omitempty"`
+}
+
+type Admin struct {
+	Username        string `json:"username"`
+	TwoFactorSecret string `json:"-"`
+	CreatedAt       int64  `json:"created_at,omitempty"`
+	UpdatedAt       int64  `json:"updated_at,omitempty"`
+}
+
+type AdminSession struct {
+	Token     string `json:"session_token"`
+	UserAgent string `json:"user_agent,omitempty"`
+	RemoteIP  string `json:"remote_ip,omitempty"`
+	ExpiresAt int64  `json:"expires_at"`
+	CreatedAt int64  `json:"created_at,omitempty"`
 }
 
 type AgentTarget struct {
@@ -127,6 +146,22 @@ func Open(path string) (*Store, error) {
 			PRIMARY KEY (agent_id, target_id, metric, ts)
 		);
 		CREATE INDEX IF NOT EXISTS idx_metric_samples_lookup ON metric_samples(agent_id, target_id, metric, ts);
+		CREATE TABLE IF NOT EXISTS admin_auth (
+			id          INTEGER PRIMARY KEY CHECK (id = 1),
+			username    TEXT NOT NULL,
+			password_hash TEXT NOT NULL,
+			two_factor_secret TEXT NOT NULL DEFAULT '',
+			created_at  INTEGER NOT NULL,
+			updated_at  INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS admin_sessions (
+			token      TEXT PRIMARY KEY,
+			user_agent TEXT NOT NULL DEFAULT '',
+			remote_ip  TEXT NOT NULL DEFAULT '',
+			expires_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
 	`); err != nil {
 		db.Close()
 		return nil, err
@@ -138,6 +173,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE agents ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE agent_targets ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 1500`,
 		`ALTER TABLE agent_targets ADD COLUMN monitors_json TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE admin_auth ADD COLUMN two_factor_secret TEXT NOT NULL DEFAULT ''`,
 	} {
 		_, _ = db.Exec(stmt)
 	}
@@ -212,6 +248,110 @@ func normalizedTimeout(timeoutMs int) int {
 
 // --- Agents ---
 
+func (s *Store) EnsureAdmin(username, password string) (Admin, string, bool, error) {
+	admin, ok, err := s.Admin()
+	if err != nil {
+		return Admin{}, "", false, err
+	}
+	if ok {
+		return admin, "", false, nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return Admin{}, "", false, err
+	}
+	now := time.Now().Unix()
+	if _, err := s.db.Exec(
+		`INSERT INTO admin_auth (id, username, password_hash, two_factor_secret, created_at, updated_at) VALUES (1, ?, ?, '', ?, ?)`,
+		username, string(hash), now, now,
+	); err != nil {
+		return Admin{}, "", false, err
+	}
+	return Admin{Username: username, CreatedAt: now, UpdatedAt: now}, password, true, nil
+}
+
+func (s *Store) Admin() (Admin, bool, error) {
+	var admin Admin
+	err := s.db.QueryRow(`SELECT username, two_factor_secret, created_at, updated_at FROM admin_auth WHERE id=1`).
+		Scan(&admin.Username, &admin.TwoFactorSecret, &admin.CreatedAt, &admin.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return Admin{}, false, nil
+	}
+	return admin, err == nil, err
+}
+
+func (s *Store) CheckAdminPassword(username, password string) (Admin, bool, error) {
+	var admin Admin
+	var hash string
+	err := s.db.QueryRow(`SELECT username, password_hash, two_factor_secret, created_at, updated_at FROM admin_auth WHERE id=1 AND username=?`, username).
+		Scan(&admin.Username, &hash, &admin.TwoFactorSecret, &admin.CreatedAt, &admin.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return Admin{}, false, nil
+	}
+	if err != nil {
+		return Admin{}, false, err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		return Admin{}, false, nil
+	}
+	return admin, true, nil
+}
+
+func (s *Store) UpdateAdminCredentials(username, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE admin_auth SET username=?, password_hash=?, updated_at=? WHERE id=1`, username, string(hash), time.Now().Unix())
+	return err
+}
+
+func (s *Store) SetAdminTwoFactor(secret string) error {
+	_, err := s.db.Exec(`UPDATE admin_auth SET two_factor_secret=?, updated_at=? WHERE id=1`, secret, time.Now().Unix())
+	return err
+}
+
+func (s *Store) CreateAdminSession(userAgent, remoteIP string, ttlSec int64) (AdminSession, error) {
+	token := randToken(32)
+	now := time.Now().Unix()
+	session := AdminSession{Token: token, UserAgent: userAgent, RemoteIP: remoteIP, ExpiresAt: now + ttlSec, CreatedAt: now}
+	_, err := s.db.Exec(
+		`INSERT INTO admin_sessions (token, user_agent, remote_ip, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`,
+		session.Token, session.UserAgent, session.RemoteIP, session.ExpiresAt, session.CreatedAt,
+	)
+	return session, err
+}
+
+func (s *Store) AdminSession(token string) (AdminSession, bool, error) {
+	if token == "" {
+		return AdminSession{}, false, nil
+	}
+	var session AdminSession
+	err := s.db.QueryRow(`SELECT token, user_agent, remote_ip, expires_at, created_at FROM admin_sessions WHERE token=?`, token).
+		Scan(&session.Token, &session.UserAgent, &session.RemoteIP, &session.ExpiresAt, &session.CreatedAt)
+	if err == sql.ErrNoRows {
+		return AdminSession{}, false, nil
+	}
+	if err != nil {
+		return AdminSession{}, false, err
+	}
+	if time.Now().Unix() >= session.ExpiresAt {
+		_ = s.DeleteAdminSession(token)
+		return AdminSession{}, false, nil
+	}
+	return session, true, nil
+}
+
+func (s *Store) DeleteAdminSession(token string) error {
+	_, err := s.db.Exec(`DELETE FROM admin_sessions WHERE token=?`, token)
+	return err
+}
+
+func (s *Store) DeleteOtherAdminSessions(currentToken string) error {
+	_, err := s.db.Exec(`DELETE FROM admin_sessions WHERE token<>?`, currentToken)
+	return err
+}
+
 func (s *Store) CreateAgent(a Agent) error {
 	_, err := s.db.Exec(`INSERT INTO agents (id, name, token, install_token, version, last_seen, disabled) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Name, a.Token, a.InstallToken, a.Version, a.LastSeen, a.Disabled)
@@ -222,6 +362,25 @@ func (s *Store) UpdateAgent(a Agent) error {
 	_, err := s.db.Exec(`UPDATE agents SET name=?, token=?, install_token=?, version=?, last_seen=?, disabled=? WHERE id=?`,
 		a.Name, a.Token, a.InstallToken, a.Version, a.LastSeen, a.Disabled, a.ID)
 	return err
+}
+
+func (s *Store) DeleteAgent(agentID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`DELETE FROM metric_samples WHERE agent_id=?`,
+		`DELETE FROM samples WHERE agent_id=?`,
+		`DELETE FROM agent_targets WHERE agent_id=?`,
+		`DELETE FROM agents WHERE id=?`,
+	} {
+		if _, err := tx.Exec(stmt, agentID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) AgentByToken(token string) (Agent, bool, error) {
@@ -426,4 +585,10 @@ func reverseSamples(s []Sample) {
 	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
 		s[i], s[j] = s[j], s[i]
 	}
+}
+
+func randToken(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

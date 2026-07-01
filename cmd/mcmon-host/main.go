@@ -47,7 +47,7 @@ func main() {
 	}
 	if cfg.AdminToken == "" {
 		cfg.AdminToken = randHex(16)
-		log.Printf("generated admin token: %s", cfg.AdminToken)
+		log.Printf("generated legacy admin token: %s", cfg.AdminToken)
 		saveConfig(*cfgPath, cfg)
 	}
 
@@ -56,6 +56,12 @@ func main() {
 		log.Fatalf("open db: %v", err)
 	}
 	defer st.Close()
+	if admin, password, created, err := st.EnsureAdmin("admin", randHex(8)); err != nil {
+		log.Fatalf("ensure admin account: %v", err)
+	} else if created {
+		log.Printf("admin account created. username=%s password=%s", admin.Username, password)
+		log.Printf("save this password now; it is only printed when the admin account is first created")
+	}
 
 	h := hub.New(st)
 	mux := web.NewMux(st, h, web.Options{
@@ -67,8 +73,8 @@ func main() {
 
 	fmt.Printf("mcmon-host listening on %s\n", cfg.Listen)
 	fmt.Printf("discovery key: %s\n", cfg.DiscoveryKey)
-	fmt.Printf("admin token: %s\n", cfg.AdminToken)
-	fmt.Printf("dashboard: http://localhost%s\n", cfg.Listen)
+	fmt.Printf("legacy admin token: %s\n", cfg.AdminToken)
+	fmt.Printf("dashboard: %s\n", dashboardURL(cfg.Listen))
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
@@ -103,4 +109,14 @@ func randHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func dashboardURL(listen string) string {
+	if listen == "" {
+		return "http://localhost:9090"
+	}
+	if listen[0] == ':' {
+		return "http://localhost" + listen
+	}
+	return "http://" + listen
 }

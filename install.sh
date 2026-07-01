@@ -35,11 +35,13 @@ Important files:
   Service: /etc/systemd/system/${SERVICE_NAME}.service
 
 Admin login:
-  The dashboard admin token is stored in:
-    ${CONFIG_PATH}
+  Username/password login is used for the dashboard and desktop app.
+  On first run, mcmon-host prints the generated admin password to the service log.
 
-  View it with:
-    sudo grep '"admin_token"' ${CONFIG_PATH}
+  View recent startup logs with:
+    journalctl -u ${SERVICE_NAME} --since "10 minutes ago" --no-pager
+
+  The legacy admin_token remains in ${CONFIG_PATH} for compatibility only.
 
 Service commands:
   Status:  systemctl status ${SERVICE_NAME} --no-pager -l
@@ -48,7 +50,7 @@ Service commands:
 
 Next steps:
   1. Open the dashboard.
-  2. Paste the admin token from the config file.
+  2. Sign in with the admin username and password from the startup log.
   3. Create an agent/node in Agents.
   4. Copy the generated agent install command from the dashboard.
 
@@ -63,8 +65,9 @@ mcmon-host upgraded and restarted.
 Config:
   ${CONFIG_PATH}
 
-Admin token:
-  sudo grep '"admin_token"' ${CONFIG_PATH}
+Admin login:
+  Use the existing admin username/password. If you need the first-run password,
+  check old service logs or reset the password from the host machine.
 
 Service commands:
   Status: systemctl status ${SERVICE_NAME} --no-pager -l

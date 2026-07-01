@@ -12,6 +12,7 @@ import (
 	"github.com/Ctrl-Creeper/mcmon-host/internal/hub"
 	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
 	"github.com/gorilla/websocket"
+	"github.com/pquerna/otp/totp"
 )
 
 func newTestServer(t *testing.T, opts Options) (*store.Store, *http.ServeMux) {
@@ -43,6 +44,172 @@ func TestAdminAPIsRequireAdminTokenWhenConfigured(t *testing.T) {
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /api/agents with admin token = %d, want %d: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestAuthLoginReturnsSessionAndSessionAuthorizesAdminAPI(t *testing.T) {
+	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+	if _, _, _, err := st.EnsureAdmin("admin", "secret-password"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader([]byte(`{"username":"admin","password":"secret-password"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("login = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var login struct {
+		SessionToken string `json:"session_token"`
+		Username     string `json:"username"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&login); err != nil {
+		t.Fatal(err)
+	}
+	if login.SessionToken == "" || login.Username != "admin" {
+		t.Fatalf("login response = %#v", login)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req.Header.Set("Authorization", "Bearer "+login.SessionToken)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/agents with session = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAuthLoginRequiresTotpWhenEnabled(t *testing.T) {
+	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+	if _, _, _, err := st.EnsureAdmin("admin", "secret-password"); err != nil {
+		t.Fatal(err)
+	}
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: "MCMon", AccountName: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAdminTwoFactor(key.Secret()); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader([]byte(`{"username":"admin","password":"secret-password"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("login without totp = %d, want 401", rr.Code)
+	}
+
+	code, err := totp.GenerateCode(key.Secret(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"username":"admin","password":"secret-password","totp_code":%q}`, code)
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("login with totp = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAuthTwoFactorSetupAndEnable(t *testing.T) {
+	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+	if _, _, _, err := st.EnsureAdmin("admin", "secret-password"); err != nil {
+		t.Fatal(err)
+	}
+	session, err := st.CreateAdminSession("agent", "127.0.0.1", 3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/2fa/setup", nil)
+	req.Header.Set("Authorization", "Bearer "+session.Token)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("setup = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var setup struct {
+		Secret          string `json:"secret"`
+		ProvisioningURI string `json:"provisioning_uri"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.Secret == "" || setup.ProvisioningURI == "" {
+		t.Fatalf("setup response = %#v", setup)
+	}
+	code, err := totp.GenerateCode(setup.Secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{"secret":%q,"totp_code":%q}`, setup.Secret, code)
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/2fa/enable", bytes.NewReader([]byte(body)))
+	req.Header.Set("Authorization", "Bearer "+session.Token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("enable = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	admin, ok, err := st.Admin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || admin.TwoFactorSecret != setup.Secret {
+		t.Fatalf("admin after enable ok=%v admin=%#v", ok, admin)
+	}
+}
+
+func TestDeleteAgentRemovesTargetsAndSamples(t *testing.T) {
+	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+	targets := []store.AgentTarget{{
+		AgentID: "agent-1", TargetID: "target-1", Name: "Target One", Host: "mc.example.com", Port: 25565,
+		TimeoutMs: 1500,
+		Monitors: store.Monitors{
+			Online: store.SimpleMonitor{Enabled: true, IntervalSec: 60},
+		},
+	}}
+	if err := st.UpsertTargets("agent-1", targets); err != nil {
+		t.Fatal(err)
+	}
+	value := 1.0
+	if err := st.InsertMetricSample(store.MetricSample{AgentID: "agent-1", TargetID: "target-1", Metric: "online", Ts: 123, Value: &value}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/agents/agent-1", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("DELETE /api/agents/agent-1 = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+
+	agents, err := st.ListAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 0 {
+		t.Fatalf("agents after delete = %#v, want none", agents)
+	}
+	gotTargets, err := st.TargetsForAgent("agent-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotTargets) != 0 {
+		t.Fatalf("targets after delete = %#v, want none", gotTargets)
+	}
+	series, err := st.MetricSeries("agent-1", "target-1", "online", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 0 {
+		t.Fatalf("metric series after delete = %#v, want none", series)
 	}
 }
 

@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/style.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="/i18n.js" defer></script>
+<script src="/auth.js" defer></script>
 </head>
 <body>
 
@@ -15,11 +16,7 @@
   <a href="/" class="active">Dashboard</a>
   <a href="/agents.html">Agents</a>
   <span class="spacer"></span>
-  <div class="auth-token">
-    <input type="password" id="adminToken" placeholder="Admin token" autocomplete="off" />
-    <button class="btn" id="saveToken">Save</button>
-    <span class="status" id="authStatus"></span>
-  </div>
+  <div class="auth-token"></div>
   <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
 </nav>
 
@@ -39,28 +36,6 @@
 
 <script>
 const themeBtn = document.getElementById('themeBtn');
-const adminTokenInput = document.getElementById('adminToken');
-const authStatus = document.getElementById('authStatus');
-adminTokenInput.value = localStorage.getItem('mcmon-host-admin-token') || '';
-document.getElementById('saveToken').onclick = () => {
-  localStorage.setItem('mcmon-host-admin-token', adminTokenInput.value.trim());
-  authStatus.textContent = 'Saved';
-  loadAll();
-};
-function apiFetch(url) {
-  const headers = {};
-  const token = localStorage.getItem('mcmon-host-admin-token') || adminTokenInput.value.trim();
-  if (token) headers.Authorization = 'Bearer ' + token;
-  return fetch(url, { headers }).then(async r => {
-    if (r.status === 401) {
-      authStatus.textContent = 'Token required';
-      throw new Error('unauthorized');
-    }
-    if (!r.ok) throw new Error(await r.text());
-    authStatus.textContent = token ? 'Authorized' : '';
-    return r.json();
-  });
-}
 function applyTheme(dark) {
   document.body.classList.toggle('dark', dark);
   themeBtn.textContent = dark ? '☀️' : '🌙';
@@ -94,7 +69,7 @@ async function loadAll() {
       apiFetch('/api/targets'),
     ]);
   } catch (e) {
-    document.getElementById('serverGrid').innerHTML = '<div class="muted" style="padding:24px;text-align:center;">Enter the admin token from the host config to view data.</div>';
+    document.getElementById('serverGrid').innerHTML = '<div class="muted" style="padding:24px;text-align:center;">Login to view host data.</div>';
     return;
   }
 
@@ -206,6 +181,7 @@ function latencyThumbnailScales(cc) {
 
 loadAll();
 setInterval(loadAll, 30000);
+window.addEventListener('mcmon-auth-change', loadAll);
 </script>
 
 </body>

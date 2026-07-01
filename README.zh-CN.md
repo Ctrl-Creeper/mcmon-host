@@ -50,7 +50,7 @@ https://github.com/Ctrl-Creeper/mcmon-agent/releases
 go run ./cmd/mcmon-host -config config.json
 ```
 
-首次运行时，如果配置中缺少 `discovery_key` 或 `admin_token`，host 会自动生成、写回配置文件，并打印到终端。
+首次运行时，如果还没有管理员账户，host 会创建单管理员账户。默认用户名是 `admin`，随机生成的密码只会在首次创建时打印到终端日志。配置中的 `admin_token` 仍作为 legacy API 兼容 fallback 保留。
 
 默认 dashboard：
 
@@ -138,21 +138,23 @@ docker compose up -d
 - `listen`：HTTP 监听地址。
 - `db_path`：SQLite 数据库路径。
 - `discovery_key`：legacy/automatic discovery 使用的 bearer token。
-- `admin_token`：dashboard 和 admin API 使用的 bearer token。
+- `admin_token`：legacy admin API 兼容 fallback。dashboard 和桌面 app 使用用户名/密码 session 登录。
 - `public_url`：高级可选项，用于覆盖 agent endpoint。大多数部署保持为空即可，让 dashboard/API 根据当前请求推断。
 - `ws_allowed_origins`：WebSocket Origin 允许列表，逗号分隔。同 host origin 默认允许。
 
 ## Dashboard 工作流
 
 1. 启动 `mcmon-host`。
-2. 打开 dashboard，输入 `admin_token`。
+2. 打开 dashboard，使用管理员用户名和密码登录。
 3. 进入 `Agents`。
 4. 创建节点。
-5. 配置目标服务器和监控项。
+5. 在弹窗表单里配置目标服务器和监控项。
 6. 从 dashboard 复制生成的一键安装命令。
 7. 在目标机器上运行该命令。
 
 如果要修改已有 agent，先在 host dashboard 更新节点配置，然后重新运行生成的一键安装命令覆盖。Linux 上也可以先手动用 `systemctl` 停止 agent。
+
+如果要删除 agent，在 `Agents` 页面使用删除操作。host 会同时删除该 agent、它的目标配置和已保存的指标历史。
 
 ## Agent 安装
 

@@ -6,6 +6,7 @@
 <title>Agents - MCMon Host</title>
 <link rel="stylesheet" href="/style.css" />
 <script src="/i18n.js" defer></script>
+<script src="/auth.js" defer></script>
 </head>
 <body>
 
@@ -14,11 +15,7 @@
   <a href="/">Dashboard</a>
   <a href="/agents.html" class="active">Agents</a>
   <span class="spacer"></span>
-  <div class="auth-token">
-    <input type="password" id="adminToken" placeholder="Admin token" autocomplete="off" />
-    <button class="btn" id="saveToken">Save</button>
-    <span class="status" id="authStatus"></span>
-  </div>
+  <div class="auth-token"></div>
   <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
 </nav>
 
@@ -48,49 +45,80 @@
   <div class="err" id="createErr"></div>
 </div>
 
-<div class="card" id="configCard" style="display:none;">
+<div class="card" id="securityCard">
   <div class="card-header">
-    <h2 id="configTitle">Node config</h2>
+    <h2>Account security</h2>
   </div>
-  <p class="muted" style="margin-bottom:10px;">Targets are configured on the host. Re-run the generated install command to overwrite a running agent.</p>
-  <textarea id="targetsJson" style="width:100%;min-height:260px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;"></textarea>
-  <div class="row" style="margin-top:12px;">
-    <button class="btn primary" id="saveTargets">Save targets</button>
-    <button class="btn" id="copyInstall">Copy Linux/macOS install</button>
-    <button class="btn" id="copyWindowsInstall">Copy Windows install</button>
+  <div class="security-grid">
+    <label>Username<input type="text" id="securityUsername" autocomplete="username" placeholder="admin"></label>
+    <label>Current password<input type="password" id="currentPassword" autocomplete="current-password"></label>
+    <label>New password<input type="password" id="newPassword" autocomplete="new-password"></label>
+    <button class="btn primary" id="savePassword" type="button">Update password</button>
   </div>
-  <pre id="installCmd" style="white-space:pre-wrap;margin-top:12px;"></pre>
-  <div class="err" id="configErr"></div>
-  <div class="ok" id="configOk"></div>
+  <div class="security-grid twofa-grid">
+    <div>
+      <div class="muted" id="twofaStatus">2FA status: —</div>
+      <div class="secret-box" id="twofaSetup" style="display:none;">
+        <div><strong>Secret</strong>: <span id="twofaSecret"></span></div>
+        <div><strong>Provisioning URI</strong>: <span id="twofaURI"></span></div>
+      </div>
+    </div>
+    <label>2FA code<input type="text" id="twofaCode" inputmode="numeric" autocomplete="one-time-code"></label>
+    <button class="btn" id="setup2fa" type="button">Generate 2FA</button>
+    <button class="btn primary" id="enable2fa" type="button">Enable 2FA</button>
+    <button class="btn danger" id="disable2fa" type="button">Disable 2FA</button>
+  </div>
+  <div class="err" id="securityErr"></div>
+  <div class="ok" id="securityOk"></div>
 </div>
 
+</div>
+
+<div class="modal-backdrop" id="configModal" aria-hidden="true">
+  <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="configTitle">
+    <div class="modal-header">
+      <div>
+        <h2 id="configTitle">Node config</h2>
+        <p class="muted">Targets are configured on the host. Re-run the generated install command to overwrite a running agent.</p>
+      </div>
+      <button class="btn ghost" id="closeConfig" type="button">Close</button>
+    </div>
+
+    <div id="targetForms" class="target-forms"></div>
+
+    <div class="row modal-row">
+      <button class="btn" id="addTarget" type="button">Add target</button>
+      <button class="btn primary" id="saveTargets" type="button">Save targets</button>
+    </div>
+
+    <div class="install-box">
+      <div class="install-row">
+        <div>
+          <div class="install-title">Linux/macOS install</div>
+          <pre id="installCmd"></pre>
+        </div>
+        <button class="btn" id="copyInstall" type="button">Copy</button>
+      </div>
+      <div class="install-row">
+        <div>
+          <div class="install-title">Windows install</div>
+          <pre id="windowsInstallCmd"></pre>
+        </div>
+        <button class="btn" id="copyWindowsInstall" type="button">Copy</button>
+      </div>
+    </div>
+
+    <div class="err" id="configErr"></div>
+    <div class="ok" id="configOk"></div>
+  </section>
 </div>
 
 <script>
 const themeBtn = document.getElementById('themeBtn');
-const adminTokenInput = document.getElementById('adminToken');
-const authStatus = document.getElementById('authStatus');
-adminTokenInput.value = localStorage.getItem('mcmon-host-admin-token') || '';
-document.getElementById('saveToken').onclick = () => {
-  localStorage.setItem('mcmon-host-admin-token', adminTokenInput.value.trim());
-  authStatus.textContent = 'Saved';
-  loadAgents();
-};
-function apiFetch(url, opts = {}) {
-  const headers = {};
-  const token = localStorage.getItem('mcmon-host-admin-token') || adminTokenInput.value.trim();
-  if (token) headers.Authorization = 'Bearer ' + token;
-  if (opts.body) headers['Content-Type'] = 'application/json';
-  return fetch(url, { ...opts, headers }).then(async r => {
-    if (r.status === 401) {
-      authStatus.textContent = 'Token required';
-      throw new Error('unauthorized');
-    }
-    if (!r.ok) throw new Error(await r.text());
-    authStatus.textContent = token ? 'Authorized' : '';
-    return r.json();
-  });
-}
+const configModal = document.getElementById('configModal');
+const targetForms = document.getElementById('targetForms');
+const t = text => window.mcmonI18n?.t(text) || text;
+let pendingTwoFactorSecret = '';
 function applyTheme(dark) {
   document.body.classList.toggle('dark', dark);
   themeBtn.textContent = dark ? '☀️' : '🌙';
@@ -112,7 +140,7 @@ async function loadAgents() {
   } catch (e) {
     body.innerHTML = '';
     emptyMsg.style.display = '';
-    emptyMsg.textContent = 'Enter the admin token from the host config to view agents.';
+    emptyMsg.textContent = t('Login to view host agents.');
     return;
   }
 
@@ -139,11 +167,27 @@ async function loadAgents() {
       <td>${esc(a.version || '—')}</td>
       <td>${a.last_seen ? new Date(a.last_seen * 1000).toLocaleString() : '—'}</td>
       <td>${targetNames}</td>
-      <td><button class="btn ghost" data-config="${a.id}">Configure</button></td>
+      <td>
+        <div class="table-actions">
+          <button class="btn ghost" data-config="${a.id}">Configure</button>
+          <button class="btn danger ghost" data-delete="${a.id}">Delete</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
   body.querySelectorAll('[data-config]').forEach(b => b.onclick = () => openConfig(b.dataset.config, agents.find(a => a.id === b.dataset.config), targetsByAgent[b.dataset.config] || []));
+  body.querySelectorAll('[data-delete]').forEach(b => b.onclick = () => deleteAgent(b.dataset.delete, agents.find(a => a.id === b.dataset.delete)));
   window.mcmonI18n?.apply();
+}
+
+async function loadSecurity() {
+  try {
+    const me = await apiFetch('/api/auth/me');
+    document.getElementById('securityUsername').value = me.username || 'admin';
+    document.getElementById('twofaStatus').textContent = `${t('2FA status')}: ${me.totp_enabled ? t('Enabled') : t('Disabled')}`;
+  } catch {
+    document.getElementById('twofaStatus').textContent = `${t('2FA status')}: —`;
+  }
 }
 
 function defaultTarget() {
@@ -162,16 +206,33 @@ function defaultTarget() {
   };
 }
 
+function cloneJSON(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeTarget(target) {
+  const base = { ...defaultTarget(), ...cloneJSON(target || {}) };
+  base.monitors = {
+    online: { ...defaultTarget().monitors.online, ...(target?.monitors?.online || {}) },
+    players: { ...defaultTarget().monitors.players, ...(target?.monitors?.players || {}) },
+    latency: { ...defaultTarget().monitors.latency, ...(target?.monitors?.latency || {}) },
+    loss: { ...defaultTarget().monitors.loss, ...(target?.monitors?.loss || {}) }
+  };
+  return base;
+}
+
 async function openConfig(id, agent, targets) {
   window.currentAgentId = id;
   window.currentAgent = agent;
-  document.getElementById('configCard').style.display = '';
-  document.getElementById('configTitle').textContent = `Node config · ${agent ? agent.name : id}`;
-  document.getElementById('targetsJson').value = JSON.stringify(targets.length ? targets : [defaultTarget()], null, 2);
+  window.currentTargets = (targets.length ? targets : [defaultTarget()]).map(normalizeTarget);
+  document.getElementById('configTitle').innerHTML = `<span>Node config</span> · ${esc(agent ? agent.name : id)}`;
   document.getElementById('installCmd').textContent = installCommand(id, agent);
+  document.getElementById('windowsInstallCmd').textContent = windowsInstallCommand(id, agent);
   document.getElementById('configErr').textContent = '';
   document.getElementById('configOk').textContent = '';
-  document.getElementById('configCard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  renderTargetForms();
+  configModal.classList.add('open');
+  configModal.setAttribute('aria-hidden', 'false');
   window.mcmonI18n?.apply();
 }
 
@@ -184,10 +245,107 @@ function windowsInstallCommand(id, agent) {
   return `powershell -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing '${origin}/api/agents/${encodeURIComponent(id)}/install.ps1?token=${encodeURIComponent(agent.install_token || '<install-token-hidden>')}' | iex"`;
 }
 
+function monitorBlock(label, key, monitor, probe) {
+  return `<div class="monitor-card" data-monitor="${key}">
+    <label class="toggle-line">
+      <input type="checkbox" data-field="enabled" ${monitor.enabled ? 'checked' : ''}>
+      <span>${label}</span>
+    </label>
+    <label>Interval (sec)<input type="number" min="5" step="1" data-field="interval_sec" value="${Number(monitor.interval_sec || 60)}"></label>
+    ${probe ? `
+      <label>Probes / burst<input type="number" min="1" step="1" data-field="probes_per_burst" value="${Number(monitor.probes_per_burst || 5)}"></label>
+      <label>Probe gap (ms)<input type="number" min="100" step="50" data-field="probe_gap_ms" value="${Number(monitor.probe_gap_ms || 1500)}"></label>
+      ${key === 'latency' ? `<label>Protocol version<input type="number" min="0" step="1" data-field="protocol_version" value="${Number(monitor.protocol_version || 760)}"></label>` : ''}
+    ` : ''}
+  </div>`;
+}
+
+function renderTargetForms() {
+  targetForms.innerHTML = (window.currentTargets || []).map((target, index) => {
+    const normalized = normalizeTarget(target);
+    return `<section class="target-editor" data-index="${index}" data-target-id="${esc(normalized.target_id || '')}">
+      <div class="target-header">
+        <h3>${esc(normalized.name || t('Target'))}</h3>
+        <button class="btn danger ghost" type="button" data-remove-target="${index}">Remove</button>
+      </div>
+      <div class="target-grid">
+        <label>Target name<input type="text" data-field="name" value="${esc(normalized.name || '')}" placeholder="Minecraft Server"></label>
+        <label>Host<input type="text" data-field="host" value="${esc(normalized.host || '')}" placeholder="mc.example.com"></label>
+        <label>Port<input type="number" min="1" max="65535" step="1" data-field="port" value="${Number(normalized.port || 25565)}"></label>
+        <label>Timeout (ms)<input type="number" min="100" step="100" data-field="timeout_ms" value="${Number(normalized.timeout_ms || 1500)}"></label>
+      </div>
+      <div class="monitor-grid">
+        ${monitorBlock('Online', 'online', normalized.monitors.online, false)}
+        ${monitorBlock('Players', 'players', normalized.monitors.players, false)}
+        ${monitorBlock('Latency', 'latency', normalized.monitors.latency, true)}
+        ${monitorBlock('Loss', 'loss', normalized.monitors.loss, true)}
+      </div>
+    </section>`;
+  }).join('');
+  targetForms.querySelectorAll('[data-remove-target]').forEach(btn => {
+    btn.onclick = () => {
+      window.currentTargets.splice(Number(btn.dataset.removeTarget), 1);
+      if (window.currentTargets.length === 0) window.currentTargets.push(defaultTarget());
+      renderTargetForms();
+      window.mcmonI18n?.apply();
+    };
+  });
+}
+
+function readNumber(root, selector, fallback) {
+  const value = Number(root.querySelector(selector)?.value);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function collectTargets() {
+  const editors = [...targetForms.querySelectorAll('.target-editor')];
+  return editors.map((editor, index) => {
+    const name = editor.querySelector('[data-field="name"]').value.trim();
+    const host = editor.querySelector('[data-field="host"]').value.trim();
+    if (!name || !host) throw new Error(t('Target name and host are required.'));
+    const monitors = {};
+    editor.querySelectorAll('.monitor-card').forEach(card => {
+      const key = card.dataset.monitor;
+      monitors[key] = {
+        enabled: card.querySelector('[data-field="enabled"]').checked,
+        interval_sec: readNumber(card, '[data-field="interval_sec"]', 60)
+      };
+      if (key === 'latency' || key === 'loss') {
+        monitors[key].probes_per_burst = readNumber(card, '[data-field="probes_per_burst"]', 5);
+        monitors[key].probe_gap_ms = readNumber(card, '[data-field="probe_gap_ms"]', 1500);
+        if (key === 'latency') {
+          monitors[key].protocol_version = readNumber(card, '[data-field="protocol_version"]', 760);
+        }
+      }
+    });
+    return {
+      target_id: editor.dataset.targetId || `server-${Date.now().toString(36)}-${index + 1}`,
+      name,
+      host,
+      port: readNumber(editor, '[data-field="port"]', 25565),
+      timeout_ms: readNumber(editor, '[data-field="timeout_ms"]', 1500),
+      monitors
+    };
+  });
+}
+
+async function deleteAgent(id, agent) {
+  const name = agent?.name || id;
+  if (!confirm(`${t('Delete agent')} "${name}"? ${t('This removes its targets and stored metrics from the host.')}`)) return;
+  await apiFetch(`/api/agents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (window.currentAgentId === id) closeConfigModal();
+  await loadAgents();
+}
+
+function closeConfigModal() {
+  configModal.classList.remove('open');
+  configModal.setAttribute('aria-hidden', 'true');
+}
+
 document.getElementById('createAgent').onclick = async () => {
   document.getElementById('createErr').textContent = '';
   const name = document.getElementById('newName').value.trim();
-  if (!name) { document.getElementById('createErr').textContent = 'Name is required.'; return; }
+  if (!name) { document.getElementById('createErr').textContent = t('Name is required.'); return; }
   try {
     await apiFetch('/api/agents', { method: 'POST', body: JSON.stringify({ name, targets: [defaultTarget()] }) });
     document.getElementById('newName').value = '';
@@ -201,9 +359,10 @@ document.getElementById('saveTargets').onclick = async () => {
   document.getElementById('configErr').textContent = '';
   document.getElementById('configOk').textContent = '';
   try {
-    const targets = JSON.parse(document.getElementById('targetsJson').value);
+    const targets = collectTargets();
     await apiFetch(`/api/agents/${encodeURIComponent(window.currentAgentId)}/targets`, { method: 'PUT', body: JSON.stringify(targets) });
-    document.getElementById('configOk').textContent = 'Targets saved. Re-run the install command to overwrite the agent config.';
+    window.currentTargets = targets.map(normalizeTarget);
+    document.getElementById('configOk').textContent = t('Targets saved. Re-run the install command to overwrite the agent config.');
     await loadAgents();
   } catch (e) {
     document.getElementById('configErr').textContent = e.message;
@@ -212,15 +371,104 @@ document.getElementById('saveTargets').onclick = async () => {
 
 document.getElementById('copyInstall').onclick = async () => {
   await navigator.clipboard.writeText(document.getElementById('installCmd').textContent);
-  document.getElementById('configOk').textContent = 'Linux/macOS install command copied.';
+  document.getElementById('configOk').textContent = t('Linux/macOS install command copied.');
 };
 document.getElementById('copyWindowsInstall').onclick = async () => {
-  await navigator.clipboard.writeText(windowsInstallCommand(window.currentAgentId, window.currentAgent));
-  document.getElementById('configOk').textContent = 'Windows install command copied.';
+  await navigator.clipboard.writeText(document.getElementById('windowsInstallCmd').textContent);
+  document.getElementById('configOk').textContent = t('Windows install command copied.');
+};
+document.getElementById('addTarget').onclick = () => {
+  const next = defaultTarget();
+  next.target_id = `server-${Date.now().toString(36)}`;
+  next.name = `Minecraft Server ${window.currentTargets.length + 1}`;
+  window.currentTargets.push(next);
+  renderTargetForms();
+  window.mcmonI18n?.apply();
+};
+document.getElementById('closeConfig').onclick = closeConfigModal;
+configModal.onclick = event => {
+  if (event.target === configModal) closeConfigModal();
+};
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeConfigModal();
+});
+
+document.getElementById('savePassword').onclick = async () => {
+  document.getElementById('securityErr').textContent = '';
+  document.getElementById('securityOk').textContent = '';
+  try {
+    await apiFetch('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: document.getElementById('securityUsername').value.trim(),
+        current_password: document.getElementById('currentPassword').value,
+        new_password: document.getElementById('newPassword').value,
+      }),
+    });
+    document.getElementById('currentPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('securityOk').textContent = t('Password updated.');
+  } catch (e) {
+    document.getElementById('securityErr').textContent = e.message;
+  }
+};
+
+document.getElementById('setup2fa').onclick = async () => {
+  document.getElementById('securityErr').textContent = '';
+  document.getElementById('securityOk').textContent = '';
+  try {
+    const setup = await apiFetch('/api/auth/2fa/setup');
+    pendingTwoFactorSecret = setup.secret;
+    document.getElementById('twofaSecret').textContent = setup.secret;
+    document.getElementById('twofaURI').textContent = setup.provisioning_uri;
+    document.getElementById('twofaSetup').style.display = '';
+    document.getElementById('securityOk').textContent = t('Add this secret to your authenticator, then enter a code to enable 2FA.');
+  } catch (e) {
+    document.getElementById('securityErr').textContent = e.message;
+  }
+};
+
+document.getElementById('enable2fa').onclick = async () => {
+  document.getElementById('securityErr').textContent = '';
+  document.getElementById('securityOk').textContent = '';
+  try {
+    await apiFetch('/api/auth/2fa/enable', {
+      method: 'POST',
+      body: JSON.stringify({ secret: pendingTwoFactorSecret, totp_code: document.getElementById('twofaCode').value.trim() }),
+    });
+    document.getElementById('twofaCode').value = '';
+    document.getElementById('twofaSetup').style.display = 'none';
+    pendingTwoFactorSecret = '';
+    document.getElementById('securityOk').textContent = t('2FA enabled.');
+    await loadSecurity();
+  } catch (e) {
+    document.getElementById('securityErr').textContent = e.message;
+  }
+};
+
+document.getElementById('disable2fa').onclick = async () => {
+  document.getElementById('securityErr').textContent = '';
+  document.getElementById('securityOk').textContent = '';
+  try {
+    await apiFetch('/api/auth/2fa/disable', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: document.getElementById('currentPassword').value,
+        totp_code: document.getElementById('twofaCode').value.trim(),
+      }),
+    });
+    document.getElementById('twofaCode').value = '';
+    document.getElementById('securityOk').textContent = t('2FA disabled.');
+    await loadSecurity();
+  } catch (e) {
+    document.getElementById('securityErr').textContent = e.message;
+  }
 };
 
 loadAgents();
+loadSecurity();
 setInterval(loadAgents, 15000);
+window.addEventListener('mcmon-auth-change', () => { loadAgents(); loadSecurity(); });
 </script>
 
 </body>

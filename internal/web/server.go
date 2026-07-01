@@ -149,9 +149,10 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 	})
 
 	// --- REST API for dashboard / app ---
+	registerAuthRoutes(mux, st, opts)
 
 	mux.HandleFunc("/api/agents", func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, opts.AdminToken) {
+		if !requireAdmin(w, r, st, opts.AdminToken) {
 			return
 		}
 		switch r.Method {
@@ -220,6 +221,18 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 			sub = parts[1]
 		}
 
+		if sub == "" && r.Method == http.MethodDelete {
+			if !requireAdmin(w, r, st, opts.AdminToken) {
+				return
+			}
+			if err := st.DeleteAgent(agentID); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]bool{"ok": true})
+			return
+		}
+
 		switch sub {
 		case "install.sh":
 			if r.Method != http.MethodGet {
@@ -234,7 +247,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 			}
 			writeInstallPowerShell(w, r, st, agentID, opts)
 		case "install-token":
-			if !requireAdmin(w, r, opts.AdminToken) {
+			if !requireAdmin(w, r, st, opts.AdminToken) {
 				return
 			}
 			if r.Method != http.MethodPost {
@@ -248,7 +261,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 			}
 			writeJSON(w, map[string]string{"install_token": newToken})
 		case "targets":
-			if !requireAdmin(w, r, opts.AdminToken) {
+			if !requireAdmin(w, r, st, opts.AdminToken) {
 				return
 			}
 			switch r.Method {
@@ -283,7 +296,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
 		default:
-			if !requireAdmin(w, r, opts.AdminToken) {
+			if !requireAdmin(w, r, st, opts.AdminToken) {
 				return
 			}
 			http.Error(w, "not found", http.StatusNotFound)
@@ -291,7 +304,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 	})
 
 	mux.HandleFunc("/api/targets", func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, opts.AdminToken) {
+		if !requireAdmin(w, r, st, opts.AdminToken) {
 			return
 		}
 		targets, err := st.AllTargets()
@@ -303,7 +316,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 	})
 
 	mux.HandleFunc("/api/series", func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, opts.AdminToken) {
+		if !requireAdmin(w, r, st, opts.AdminToken) {
 			return
 		}
 		agentID := r.URL.Query().Get("agent")
@@ -323,7 +336,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 	})
 
 	mux.HandleFunc("/api/metrics", func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, opts.AdminToken) {
+		if !requireAdmin(w, r, st, opts.AdminToken) {
 			return
 		}
 		agentID := r.URL.Query().Get("agent")
@@ -360,7 +373,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-func requireAdmin(w http.ResponseWriter, r *http.Request, adminToken string) bool {
+func requireAdmin(w http.ResponseWriter, r *http.Request, st *store.Store, adminToken string) bool {
+	if adminSessionValid(r, st) {
+		return true
+	}
 	if adminToken == "" {
 		return true
 	}
