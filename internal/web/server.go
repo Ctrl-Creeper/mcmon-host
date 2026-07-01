@@ -30,10 +30,12 @@ func secureEqual(a, b string) bool {
 var staticFS embed.FS
 
 type Options struct {
-	DiscoveryKey     string
-	AdminToken       string
-	WSAllowedOrigins string
-	PublicURL        string
+	DiscoveryKey           string
+	AdminToken             string
+	WSAllowedOrigins       string
+	PublicURL              string
+	Verbose                bool
+	UpdateAdminCredentials func(username, password string) error
 }
 
 var rangeToSeconds = map[string]int64{
@@ -144,7 +146,9 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("auto-discovered new agent: id=%s name=%s", agentID, name)
+		if opts.Verbose {
+			log.Printf("auto-discovered new agent: id=%s name=%s", agentID, name)
+		}
 		writeJSON(w, map[string]string{"agent_id": agentID, "token": token})
 	})
 

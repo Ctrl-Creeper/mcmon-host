@@ -165,6 +165,49 @@ func TestAuthTwoFactorSetupAndEnable(t *testing.T) {
 	}
 }
 
+func TestAuthPasswordUpdateSyncsConfigCallback(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/mcmon-host.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.CreateAgent(store.Agent{ID: "agent-1", Name: "Agent One", Token: "agent-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := st.EnsureAdmin("admin", "old-password"); err != nil {
+		t.Fatal(err)
+	}
+	var syncedUsername, syncedPassword string
+	mux := NewMux(st, hub.New(st), Options{
+		DiscoveryKey: "discover",
+		AdminToken:   "admin-token",
+		UpdateAdminCredentials: func(username, password string) error {
+			syncedUsername = username
+			syncedPassword = password
+			return nil
+		},
+	})
+	session, err := st.CreateAdminSession("agent", "127.0.0.1", 3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader([]byte(`{"username":"admin2","current_password":"old-password","new_password":"new-password"}`)))
+	req.Header.Set("Authorization", "Bearer "+session.Token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("password update = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	if syncedUsername != "admin2" || syncedPassword != "new-password" {
+		t.Fatalf("synced credentials username=%q password=%q", syncedUsername, syncedPassword)
+	}
+	if _, ok, err := st.CheckAdminPassword("admin2", "new-password"); err != nil || !ok {
+		t.Fatalf("new credentials ok=%v err=%v", ok, err)
+	}
+}
+
 func TestDeleteAgentRemovesTargetsAndSamples(t *testing.T) {
 	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
 	targets := []store.AgentTarget{{

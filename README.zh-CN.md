@@ -50,7 +50,7 @@ https://github.com/Ctrl-Creeper/mcmon-agent/releases
 go run ./cmd/mcmon-host -config config.json
 ```
 
-首次运行时，如果还没有管理员账户，host 会创建单管理员账户。默认用户名是 `admin`，随机生成的密码只会在首次创建时打印到终端日志。配置中的 `admin_token` 仍作为 legacy API 兼容 fallback 保留。
+首次运行时，如果配置里缺少 `admin_username` 或 `admin_password`，host 会自动写入这两个字段，并同步到单管理员账户。之后要改登录账号密码，直接编辑配置并重启 host。配置中的 `admin_token` 仍作为 legacy API 兼容 fallback 保留。
 
 默认 dashboard：
 
@@ -141,8 +141,8 @@ docker compose up -d
 - `db_path`：SQLite 数据库路径。
 - `discovery_key`：legacy/automatic discovery 使用的 bearer token。
 - `admin_token`：legacy admin API 兼容 fallback。dashboard 和桌面 app 使用用户名/密码 session 登录。
-- `admin_username`：可选单管理员用户名，默认 `admin`。
-- `admin_password`：可选单管理员密码。如果设置，host 启动时会同步覆盖管理员账户密码。请确保配置文件权限私密。
+- `admin_username`：单管理员用户名，自动生成时默认 `admin`。
+- `admin_password`：单管理员密码。host 启动时会同步覆盖管理员账户密码。请确保配置文件权限私密。
 - `public_url`：高级可选项，用于覆盖 agent endpoint。大多数部署保持为空即可，让 dashboard/API 根据当前请求推断。
 - `ws_allowed_origins`：WebSocket Origin 允许列表，逗号分隔。同 host origin 默认允许。
 

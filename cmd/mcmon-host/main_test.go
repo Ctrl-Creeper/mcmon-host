@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
@@ -52,5 +54,30 @@ func TestEnsureAdminFromConfigGeneratesPasswordWhenMissing(t *testing.T) {
 	}
 	if _, ok, err := st.CheckAdminPassword("admin", password); err != nil || !ok {
 		t.Fatalf("generated password check ok=%v err=%v", ok, err)
+	}
+}
+
+func TestPrepareConfigWritesGeneratedAdminPasswordToConfig(t *testing.T) {
+	cfgPath := t.TempDir() + "/config.json"
+	cfg, created, password, err := prepareConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || password == "" {
+		t.Fatalf("created=%v password=%q, want generated password", created, password)
+	}
+	if cfg.AdminUsername != "admin" || cfg.AdminPassword != password {
+		t.Fatalf("cfg admin username=%q password=%q, want admin/generated", cfg.AdminUsername, cfg.AdminPassword)
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Config
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.AdminUsername != "admin" || saved.AdminPassword != password {
+		t.Fatalf("saved config admin username=%q password=%q, want admin/generated", saved.AdminUsername, saved.AdminPassword)
 	}
 }

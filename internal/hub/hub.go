@@ -37,6 +37,7 @@ type Hub struct {
 	mu      sync.RWMutex
 	st      *store.Store
 	clients map[string]*conn // agentID -> conn
+	verbose bool
 }
 
 type conn struct {
@@ -47,6 +48,21 @@ type conn struct {
 
 func New(st *store.Store) *Hub {
 	return &Hub{st: st, clients: make(map[string]*conn)}
+}
+
+func (h *Hub) SetVerbose(verbose bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.verbose = verbose
+}
+
+func (h *Hub) infof(format string, args ...any) {
+	h.mu.RLock()
+	verbose := h.verbose
+	h.mu.RUnlock()
+	if verbose {
+		log.Printf(format, args...)
+	}
 }
 
 // Online returns all currently connected agents.
@@ -79,7 +95,7 @@ func (h *Hub) HandleConn(ws *websocket.Conn, agent store.Agent) {
 	h.clients[agent.ID] = c
 	h.mu.Unlock()
 
-	log.Printf("agent %s (%s) connected", agent.ID, agent.Name)
+	h.infof("agent %s (%s) connected", agent.ID, agent.Name)
 
 	// Heartbeat writer
 	done := make(chan struct{})
@@ -106,7 +122,7 @@ func (h *Hub) HandleConn(ws *websocket.Conn, agent store.Agent) {
 		}
 		h.mu.Unlock()
 		ws.Close()
-		log.Printf("agent %s (%s) disconnected", agent.ID, agent.Name)
+		h.infof("agent %s (%s) disconnected", agent.ID, agent.Name)
 	}()
 
 	ws.SetReadDeadline(time.Now().Add(readDeadline))
@@ -233,7 +249,7 @@ func (h *Hub) onHelloRequest(c *conn, req rpc.Request) []byte {
 	if err := h.st.TouchAgent(c.agent.ID, hello.Version, time.Now().Unix()); err != nil {
 		log.Printf("agent %s: touch: %v", c.agent.ID, err)
 	}
-	log.Printf("agent %s: registered %d targets", c.agent.ID, len(targets))
+	h.infof("agent %s: registered %d targets", c.agent.ID, len(targets))
 
 	resp, _ := rpc.OKResponse(req.ID, "ok")
 	return resp

@@ -5,13 +5,13 @@ SERVICE_NAME="mcmon-host"
 REPO="Ctrl-Creeper/mcmon-host"
 VERSION="latest"
 BIN_PATH="/usr/local/bin/mcmon-host"
-CONFIG_DIR="/etc/mcmon-host"
-CONFIG_PATH="${CONFIG_DIR}/config.json"
-DATA_DIR="/var/lib/mcmon-host"
-DB_PATH="${DATA_DIR}/mcmon-host.db"
+CONFIG_DIR="${CONFIG_DIR:-/etc/mcmon-host}"
+CONFIG_PATH="${CONFIG_PATH:-${CONFIG_DIR}/config.json}"
+DATA_DIR="${DATA_DIR:-/var/lib/mcmon-host}"
+DB_PATH="${DB_PATH:-${DATA_DIR}/mcmon-host.db}"
 LISTEN=":9090"
-ADMIN_USERNAME="admin"
-ADMIN_PASSWORD=""
+ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 
 print_host_summary() {
   port="$(printf '%s' "$LISTEN" | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
@@ -38,10 +38,11 @@ Important files:
 
 Admin login:
   Username/password login is used for the dashboard and desktop app.
-  On first run, mcmon-host prints the generated admin password to the service log.
+  The generated admin username/password are stored in:
+    ${CONFIG_PATH}
 
-  View recent startup logs with:
-    journalctl -u ${SERVICE_NAME} --since "10 minutes ago" --no-pager
+  View them with:
+    sudo grep '"admin_\\(username\\|password\\)"' ${CONFIG_PATH}
 
   The legacy admin_token remains in ${CONFIG_PATH} for compatibility only.
 
@@ -52,7 +53,7 @@ Service commands:
 
 Next steps:
   1. Open the dashboard.
-  2. Sign in with the admin username and password from the startup log.
+  2. Sign in with the admin_username/admin_password values from the config file.
   3. Create an agent/node in Agents.
   4. Copy the generated agent install command from the dashboard.
 
@@ -68,8 +69,7 @@ Config:
   ${CONFIG_PATH}
 
 Admin login:
-  Use the existing admin username/password. If you need the first-run password,
-  check old service logs or reset the password from the host machine.
+  Use the admin_username/admin_password values in ${CONFIG_PATH}.
 
 Service commands:
   Status: systemctl status ${SERVICE_NAME} --no-pager -l
@@ -95,7 +95,7 @@ Options:
   --repo OWNER/REPO       GitHub repo for release downloads. Defaults to ${REPO}.
   --listen ADDR          HTTP listen address for a new config. Defaults to ${LISTEN}.
   --admin-username NAME  Admin username for a new config. Defaults to ${ADMIN_USERNAME}.
-  --admin-password PASS  Admin password for a new config. If omitted, host generates one on first start.
+  --admin-password PASS  Admin password for a new config. If omitted, installer generates one.
 EOF
 }
 
@@ -156,13 +156,17 @@ ensure_config() {
   if [ ! -f "$CONFIG_PATH" ]; then
     discovery_key="$(openssl rand -hex 16 2>/dev/null || date +%s | sha256sum | cut -c1-32)"
     admin_token="$(openssl rand -hex 16 2>/dev/null || date +%s%N | sha256sum | cut -c1-32)"
+    if [ -z "$ADMIN_PASSWORD" ]; then
+      ADMIN_PASSWORD="$(openssl rand -hex 8 2>/dev/null || date +%s%N | sha256sum | cut -c1-16)"
+    fi
     cat > "$CONFIG_PATH" <<EOF
 {
   "listen": "${LISTEN}",
   "db_path": "${DB_PATH}",
   "discovery_key": "${discovery_key}",
   "admin_token": "${admin_token}",
-  "admin_username": "${ADMIN_USERNAME}"$(if [ -n "$ADMIN_PASSWORD" ]; then printf ',\n  "admin_password": "%s"' "$ADMIN_PASSWORD"; fi)
+  "admin_username": "${ADMIN_USERNAME}",
+  "admin_password": "${ADMIN_PASSWORD}"
 }
 EOF
     chmod 0600 "$CONFIG_PATH"
@@ -233,6 +237,10 @@ uninstall_host() {
   echo "  ${CONFIG_DIR}"
   echo "  ${DATA_DIR}"
 }
+
+if [ "${MCMON_INSTALL_SH_SOURCE_ONLY:-}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 case "$COMMAND" in
   install) install_host ;;

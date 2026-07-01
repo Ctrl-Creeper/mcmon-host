@@ -121,12 +121,21 @@ func registerAuthRoutes(mux *http.ServeMux, st *store.Store, opts Options) {
 		if !decodeJSON(w, r, &body) {
 			return
 		}
-		admin, ok, err := st.CheckAdminPassword(body.Username, body.CurrentPassword)
+		admin, ok, err := st.Admin()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if !ok {
+			http.Error(w, "admin not initialized", http.StatusInternalServerError)
+			return
+		}
+		admin, passwordOK, err := st.CheckAdminPassword(admin.Username, body.CurrentPassword)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !passwordOK {
 			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
@@ -141,6 +150,12 @@ func registerAuthRoutes(mux *http.ServeMux, st *store.Store, opts Options) {
 		if err := st.UpdateAdminCredentials(username, body.NewPassword); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if opts.UpdateAdminCredentials != nil {
+			if err := opts.UpdateAdminCredentials(username, body.NewPassword); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		_ = st.DeleteOtherAdminSessions(adminSessionToken(r))
 		writeJSON(w, map[string]bool{"ok": true})

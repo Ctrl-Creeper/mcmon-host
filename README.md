@@ -62,9 +62,10 @@ https://github.com/Ctrl-Creeper/mcmon-agent/releases
 go run ./cmd/mcmon-host -config config.json
 ```
 
-On first run, the host creates the single admin account if needed. The default
-username is `admin`; the generated password is printed once to the terminal log.
-The host still keeps a legacy `admin_token` in the config for compatibility.
+On first run, the host writes `admin_username` and `admin_password` to the
+config if they are missing, then syncs them into the single admin account. Edit
+those config fields and restart the host to change the login credentials. The
+host still keeps a legacy `admin_token` in the config for compatibility.
 
 The default dashboard is:
 
@@ -164,9 +165,9 @@ Fields:
 - `discovery_key`: bearer token for legacy/automatic agent discovery.
 - `admin_token`: legacy bearer token fallback for admin API compatibility.
   Dashboard and desktop app login use username/password sessions instead.
-- `admin_username`: optional single admin username. Defaults to `admin`.
-- `admin_password`: optional single admin password. If set, host syncs it to
-  the admin account on startup. Keep the config file private.
+- `admin_username`: single admin username. Defaults to `admin` when generated.
+- `admin_password`: single admin password. Host syncs it to the admin account
+  on startup. Keep the config file private.
 - `public_url`: optional advanced override for the agent endpoint. Most
   deployments should leave it empty and let the dashboard/API infer the
   endpoint from the current request.
