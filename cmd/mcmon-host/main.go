@@ -22,6 +22,8 @@ type Config struct {
 	DBPath           string `json:"db_path"`
 	DiscoveryKey     string `json:"discovery_key"`
 	AdminToken       string `json:"admin_token"`
+	AdminUsername    string `json:"admin_username,omitempty"`
+	AdminPassword    string `json:"admin_password,omitempty"`
 	WSAllowedOrigins string `json:"ws_allowed_origins,omitempty"`
 	PublicURL        string `json:"public_url,omitempty"`
 }
@@ -56,11 +58,13 @@ func main() {
 		log.Fatalf("open db: %v", err)
 	}
 	defer st.Close()
-	if admin, password, created, err := st.EnsureAdmin("admin", randHex(8)); err != nil {
+	if created, generatedPassword, err := ensureAdminFromConfig(st, cfg); err != nil {
 		log.Fatalf("ensure admin account: %v", err)
-	} else if created {
-		log.Printf("admin account created. username=%s password=%s", admin.Username, password)
+	} else if generatedPassword != "" {
+		log.Printf("admin account created. username=%s password=%s", adminUsername(cfg), generatedPassword)
 		log.Printf("save this password now; it is only printed when the admin account is first created")
+	} else if created {
+		log.Printf("admin account synced from config. username=%s", adminUsername(cfg))
 	}
 
 	h := hub.New(st)
@@ -103,6 +107,31 @@ func saveConfig(path string, cfg Config) {
 		os.Remove(tmp)
 		log.Printf("save config: rename: %v", err)
 	}
+}
+
+func ensureAdminFromConfig(st *store.Store, cfg Config) (created bool, generatedPassword string, err error) {
+	username := adminUsername(cfg)
+	if cfg.AdminPassword != "" {
+		if _, ok, err := st.Admin(); err != nil {
+			return false, "", err
+		} else if ok {
+			return false, "", st.UpdateAdminCredentials(username, cfg.AdminPassword)
+		}
+		_, _, created, err := st.EnsureAdmin(username, cfg.AdminPassword)
+		return created, "", err
+	}
+	_, password, created, err := st.EnsureAdmin(username, randHex(8))
+	if !created {
+		password = ""
+	}
+	return created, password, err
+}
+
+func adminUsername(cfg Config) string {
+	if cfg.AdminUsername == "" {
+		return "admin"
+	}
+	return cfg.AdminUsername
 }
 
 func randHex(n int) string {

@@ -151,6 +151,8 @@ Example `config.json`:
   "db_path": "mcmon-host.db",
   "discovery_key": "replace-with-random-discovery-key",
   "admin_token": "replace-with-random-admin-token",
+  "admin_username": "admin",
+  "admin_password": "replace-with-a-strong-password",
   "ws_allowed_origins": "https://monitor.example.com"
 }
 ```
@@ -162,6 +164,9 @@ Fields:
 - `discovery_key`: bearer token for legacy/automatic agent discovery.
 - `admin_token`: legacy bearer token fallback for admin API compatibility.
   Dashboard and desktop app login use username/password sessions instead.
+- `admin_username`: optional single admin username. Defaults to `admin`.
+- `admin_password`: optional single admin password. If set, host syncs it to
+  the admin account on startup. Keep the config file private.
 - `public_url`: optional advanced override for the agent endpoint. Most
   deployments should leave it empty and let the dashboard/API infer the
   endpoint from the current request.

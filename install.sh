@@ -10,6 +10,8 @@ CONFIG_PATH="${CONFIG_DIR}/config.json"
 DATA_DIR="/var/lib/mcmon-host"
 DB_PATH="${DATA_DIR}/mcmon-host.db"
 LISTEN=":9090"
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD=""
 
 print_host_summary() {
   port="$(printf '%s' "$LISTEN" | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
@@ -92,6 +94,8 @@ Options:
   --version VERSION       Release tag to install. Defaults to latest.
   --repo OWNER/REPO       GitHub repo for release downloads. Defaults to ${REPO}.
   --listen ADDR          HTTP listen address for a new config. Defaults to ${LISTEN}.
+  --admin-username NAME  Admin username for a new config. Defaults to ${ADMIN_USERNAME}.
+  --admin-password PASS  Admin password for a new config. If omitted, host generates one on first start.
 EOF
 }
 
@@ -107,6 +111,8 @@ while [ "$#" -gt 0 ]; do
     --version) VERSION="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --listen) LISTEN="$2"; shift 2 ;;
+    --admin-username) ADMIN_USERNAME="$2"; shift 2 ;;
+    --admin-password) ADMIN_PASSWORD="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -155,7 +161,8 @@ ensure_config() {
   "listen": "${LISTEN}",
   "db_path": "${DB_PATH}",
   "discovery_key": "${discovery_key}",
-  "admin_token": "${admin_token}"
+  "admin_token": "${admin_token}",
+  "admin_username": "${ADMIN_USERNAME}"$(if [ -n "$ADMIN_PASSWORD" ]; then printf ',\n  "admin_password": "%s"' "$ADMIN_PASSWORD"; fi)
 }
 EOF
     chmod 0600 "$CONFIG_PATH"

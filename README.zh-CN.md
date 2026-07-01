@@ -129,6 +129,8 @@ docker compose up -d
   "db_path": "mcmon-host.db",
   "discovery_key": "replace-with-random-discovery-key",
   "admin_token": "replace-with-random-admin-token",
+  "admin_username": "admin",
+  "admin_password": "replace-with-a-strong-password",
   "ws_allowed_origins": "https://monitor.example.com"
 }
 ```
@@ -139,6 +141,8 @@ docker compose up -d
 - `db_path`：SQLite 数据库路径。
 - `discovery_key`：legacy/automatic discovery 使用的 bearer token。
 - `admin_token`：legacy admin API 兼容 fallback。dashboard 和桌面 app 使用用户名/密码 session 登录。
+- `admin_username`：可选单管理员用户名，默认 `admin`。
+- `admin_password`：可选单管理员密码。如果设置，host 启动时会同步覆盖管理员账户密码。请确保配置文件权限私密。
 - `public_url`：高级可选项，用于覆盖 agent endpoint。大多数部署保持为空即可，让 dashboard/API 根据当前请求推断。
 - `ws_allowed_origins`：WebSocket Origin 允许列表，逗号分隔。同 host origin 默认允许。
 

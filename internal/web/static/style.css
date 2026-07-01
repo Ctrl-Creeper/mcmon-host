@@ -84,9 +84,6 @@ nav .spacer { flex: 1; }
 .theme-toggle:hover { color: var(--text); background: var(--bg-card-hover); }
 
 .auth-token { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; padding: 8px 0 8px 12px; }
-.auth-token input { width: 120px; max-width: 22vw; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text); font-size: 12px; }
-.auth-token #authPassword { width: 132px; }
-.auth-token #authTotp { width: 92px; }
 .auth-token .btn { padding: 7px 10px; }
 .auth-token .status { font-size: 12px; color: var(--text-faint); }
 
@@ -150,13 +147,6 @@ input[type="password"]:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-light);
 }
-.auth-token input {
-  width: 120px;
-  max-width: 22vw;
-  padding: 7px 10px;
-  font-size: 12px;
-}
-
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .dot.offline { background: var(--red); box-shadow: 0 0 6px var(--red); }
@@ -206,6 +196,9 @@ tbody tr:hover { background: var(--bg-card-hover); }
 }
 .modal-header h2 { font-size: 18px; font-weight: 650; margin-bottom: 4px; }
 .modal-row { margin: 14px 0; justify-content: flex-end; }
+.auth-modal-panel { width: min(420px, 100%); }
+.auth-form { display: grid; gap: 12px; }
+.auth-form .btn { justify-content: center; margin-top: 2px; }
 .target-forms { display: grid; gap: 14px; }
 .target-editor {
   border: 1px solid var(--border);

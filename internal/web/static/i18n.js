@@ -8,6 +8,8 @@
     '2FA code': '2FA 验证码',
     'Login': '登录',
     'Logout': '退出',
+    'Sign in': '登录',
+    'Use the admin account configured on this host.': '使用此 host 配置的管理员账户。',
     'Login required': '需要登录',
     'Login failed': '登录失败',
     'Signing in...': '正在登录...',
