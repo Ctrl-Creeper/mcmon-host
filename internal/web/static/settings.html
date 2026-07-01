@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Settings - MCMon Host</title>
+<link rel="stylesheet" href="/style.css" />
+<script src="/i18n.js"></script>
+<script src="/auth.js"></script>
+</head>
+<body>
+
+<nav>
+  <span class="logo">⚡ MCMon Host</span>
+  <a href="/">Dashboard</a>
+  <a href="/agents.html">Agents</a>
+  <a href="/settings.html" class="active">Settings</a>
+  <span class="spacer"></span>
+  <div class="auth-token"></div>
+  <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
+</nav>
+
+<div class="wrap">
+
+<div class="card" id="securityCard">
+  <div class="card-header">
+    <h2>Account security</h2>
+  </div>
+  <div class="security-grid">
+    <label>Username<input type="text" id="securityUsername" autocomplete="username" placeholder="admin"></label>
+    <label>Current password<input type="password" id="currentPassword" autocomplete="current-password"></label>
+    <label>New password<input type="password" id="newPassword" autocomplete="new-password"></label>
+    <button class="btn primary" id="savePassword" type="button">Update password</button>
+  </div>
+  <div class="security-grid twofa-grid">
+    <div>
+      <div class="muted" id="twofaStatus">2FA status: —</div>
+      <div class="secret-box" id="twofaSetup" style="display:none;">
+        <div><strong>Secret</strong>: <span id="twofaSecret"></span></div>
+        <div><strong>Provisioning URI</strong>: <span id="twofaURI"></span></div>
+      </div>
+    </div>
+    <label>2FA code<input type="text" id="twofaCode" inputmode="numeric" autocomplete="one-time-code"></label>
+    <button class="btn" id="setup2fa" type="button">Generate 2FA</button>
+    <button class="btn primary" id="enable2fa" type="button">Enable 2FA</button>
+    <button class="btn danger" id="disable2fa" type="button">Disable 2FA</button>
+  </div>
+  <div class="err" id="securityErr"></div>
+  <div class="ok" id="securityOk"></div>
+</div>
+
+<div class="card" id="settingsLoginCard" style="display:none;">
+  <div class="muted empty-state">Login to manage account security.</div>
+</div>
+
+</div>
+
+<script>
+const themeBtn = document.getElementById('themeBtn');
+const t = text => window.mcmonI18n?.t(text) || text;
+let pendingTwoFactorSecret = '';
+
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark);
+  themeBtn.textContent = dark ? '☀️' : '🌙';
+  localStorage.setItem('mcmon-theme', dark ? 'dark' : 'light');
+}
+themeBtn.onclick = () => { applyTheme(!document.body.classList.contains('dark')); };
+applyTheme(localStorage.getItem('mcmon-theme') === 'dark' || (!localStorage.getItem('mcmon-theme') && matchMedia('(prefers-color-scheme:dark)').matches));
+
+async function loadSecurity() {
+  if (!window.mcmonAuth?.isAuthenticated) {
+    showSecurity(false);
+    return;
+  }
+  const me = window.mcmonAuth.user || {};
+  showSecurity(true);
+  document.getElementById('securityUsername').value = me.username || 'admin';
+  document.getElementById('twofaStatus').textContent = `${t('2FA status')}: ${me.totp_enabled ? t('Enabled') : t('Disabled')}`;
+}
+
+function showSecurity(show) {
+  document.getElementById('securityCard').style.display = show ? '' : 'none';
+  document.getElementById('settingsLoginCard').style.display = show ? 'none' : '';
+}
+
+document.getElementById('savePassword').onclick = async () => {
+  document.getElementById('securityErr').textContent = '';
+  document.getElementById('securityOk').textContent = '';
+  try {
+    await apiFetch('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: document.getElementById('securityUsername').value.trim(),
+        current_password: document.getElementById('currentPassword').value,
+        new_password: document.getElementById('newPassword').value,
+      }),
+    });
+    document.getElementById('currentPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('securityOk').textContent = t('Password updated.');
+    await window.mcmonAuth.refresh({ reason: 'password-updated' });
+    await loadSecurity();
+  } catch (e) {
+    document.getElementById('securityErr').textContent = e.message;
+  }
+};
+
+document.getElementById('setup2fa').onclick = async () => {
+  document.getElementById('securityErr').textContent = '';
+  document.getElementById('securityOk').textContent = '';
+  try {
+    const setup = await apiFetch('/api/auth/2fa/setup');
+    pendingTwoFactorSecret = setup.secret;
+    document.getElementById('twofaSecret').textContent = setup.secret;
+    document.getElementById('twofaURI').textContent = setup.provisioning_uri;
+    document.getElementById('twofaSetup').style.display = '';
+    document.getElementById('securityOk').textContent = t('Add this secret to your authenticator, then enter a code to enable 2FA.');
+  } catch (e) {
+    document.getElementById('securityErr').textContent = e.message;
+  }
+};
+
+document.getElementById('enable2fa').onclick = async () => {
+  document.getElementById('securityErr').textContent = '';
+  document.getElementById('securityOk').textContent = '';
+  try {
+    await apiFetch('/api/auth/2fa/enable', {
+      method: 'POST',
+      body: JSON.stringify({ secret: pendingTwoFactorSecret, totp_code: document.getElementById('twofaCode').value.trim() }),
+    });
+    document.getElementById('twofaCode').value = '';
+    document.getElementById('twofaSetup').style.display = 'none';
+    pendingTwoFactorSecret = '';
+    document.getElementById('securityOk').textContent = t('2FA enabled.');
+    await window.mcmonAuth.refresh({ reason: '2fa-enabled' });
+    await loadSecurity();
+  } catch (e) {
+    document.getElementById('securityErr').textContent = e.message;
+  }
+};
+
+document.getElementById('disable2fa').onclick = async () => {
+  document.getElementById('securityErr').textContent = '';
+  document.getElementById('securityOk').textContent = '';
+  try {
+    await apiFetch('/api/auth/2fa/disable', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: document.getElementById('currentPassword').value,
+        totp_code: document.getElementById('twofaCode').value.trim(),
+      }),
+    });
+    document.getElementById('twofaCode').value = '';
+    document.getElementById('securityOk').textContent = t('2FA disabled.');
+    await window.mcmonAuth.refresh({ reason: '2fa-disabled' });
+    await loadSecurity();
+  } catch (e) {
+    document.getElementById('securityErr').textContent = e.message;
+  }
+};
+
+function onAuthReady() {
+  loadSecurity();
+}
+
+window.mcmonAuth.onReady(onAuthReady);
+window.mcmonAuth.onChange(onAuthReady);
+</script>
+
+</body>
+</html>

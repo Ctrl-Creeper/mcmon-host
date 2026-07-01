@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Agents - MCMon Host</title>
 <link rel="stylesheet" href="/style.css" />
-<script src="/i18n.js" defer></script>
-<script src="/auth.js" defer></script>
+<script src="/i18n.js"></script>
+<script src="/auth.js"></script>
 </head>
 <body>
 
@@ -14,6 +14,7 @@
   <span class="logo">⚡ MCMon Host</span>
   <a href="/">Dashboard</a>
   <a href="/agents.html" class="active">Agents</a>
+  <a href="/settings.html">Settings</a>
   <span class="spacer"></span>
   <div class="auth-token"></div>
   <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
@@ -43,33 +44,6 @@
     <button class="btn primary" id="createAgent">Create</button>
   </div>
   <div class="err" id="createErr"></div>
-</div>
-
-<div class="card" id="securityCard">
-  <div class="card-header">
-    <h2>Account security</h2>
-  </div>
-  <div class="security-grid">
-    <label>Username<input type="text" id="securityUsername" autocomplete="username" placeholder="admin"></label>
-    <label>Current password<input type="password" id="currentPassword" autocomplete="current-password"></label>
-    <label>New password<input type="password" id="newPassword" autocomplete="new-password"></label>
-    <button class="btn primary" id="savePassword" type="button">Update password</button>
-  </div>
-  <div class="security-grid twofa-grid">
-    <div>
-      <div class="muted" id="twofaStatus">2FA status: —</div>
-      <div class="secret-box" id="twofaSetup" style="display:none;">
-        <div><strong>Secret</strong>: <span id="twofaSecret"></span></div>
-        <div><strong>Provisioning URI</strong>: <span id="twofaURI"></span></div>
-      </div>
-    </div>
-    <label>2FA code<input type="text" id="twofaCode" inputmode="numeric" autocomplete="one-time-code"></label>
-    <button class="btn" id="setup2fa" type="button">Generate 2FA</button>
-    <button class="btn primary" id="enable2fa" type="button">Enable 2FA</button>
-    <button class="btn danger" id="disable2fa" type="button">Disable 2FA</button>
-  </div>
-  <div class="err" id="securityErr"></div>
-  <div class="ok" id="securityOk"></div>
 </div>
 
 </div>
@@ -118,7 +92,7 @@ const themeBtn = document.getElementById('themeBtn');
 const configModal = document.getElementById('configModal');
 const targetForms = document.getElementById('targetForms');
 const t = text => window.mcmonI18n?.t(text) || text;
-let pendingTwoFactorSecret = '';
+let agentsTimer = null;
 function applyTheme(dark) {
   document.body.classList.toggle('dark', dark);
   themeBtn.textContent = dark ? '☀️' : '🌙';
@@ -134,6 +108,12 @@ function esc(s) {
 async function loadAgents() {
   const body = document.getElementById('agentBody');
   const emptyMsg = document.getElementById('emptyMsg');
+  if (!window.mcmonAuth?.isAuthenticated) {
+    body.innerHTML = '';
+    emptyMsg.style.display = '';
+    emptyMsg.textContent = t('Login to view host agents.');
+    return;
+  }
   let agents;
   try {
     agents = await apiFetch('/api/agents') || [];
@@ -147,6 +127,7 @@ async function loadAgents() {
   if (agents.length === 0) {
     body.innerHTML = '';
     emptyMsg.style.display = '';
+    emptyMsg.textContent = t('No agents registered yet.');
     return;
   }
   emptyMsg.style.display = 'none';
@@ -178,16 +159,6 @@ async function loadAgents() {
   body.querySelectorAll('[data-config]').forEach(b => b.onclick = () => openConfig(b.dataset.config, agents.find(a => a.id === b.dataset.config), targetsByAgent[b.dataset.config] || []));
   body.querySelectorAll('[data-delete]').forEach(b => b.onclick = () => deleteAgent(b.dataset.delete, agents.find(a => a.id === b.dataset.delete)));
   window.mcmonI18n?.apply();
-}
-
-async function loadSecurity() {
-  try {
-    const me = await apiFetch('/api/auth/me');
-    document.getElementById('securityUsername').value = me.username || 'admin';
-    document.getElementById('twofaStatus').textContent = `${t('2FA status')}: ${me.totp_enabled ? t('Enabled') : t('Disabled')}`;
-  } catch {
-    document.getElementById('twofaStatus').textContent = `${t('2FA status')}: —`;
-  }
 }
 
 function defaultTarget() {
@@ -393,82 +364,31 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeConfigModal();
 });
 
-document.getElementById('savePassword').onclick = async () => {
-  document.getElementById('securityErr').textContent = '';
-  document.getElementById('securityOk').textContent = '';
-  try {
-    await apiFetch('/api/auth/password', {
-      method: 'POST',
-      body: JSON.stringify({
-        username: document.getElementById('securityUsername').value.trim(),
-        current_password: document.getElementById('currentPassword').value,
-        new_password: document.getElementById('newPassword').value,
-      }),
-    });
-    document.getElementById('currentPassword').value = '';
-    document.getElementById('newPassword').value = '';
-    document.getElementById('securityOk').textContent = t('Password updated.');
-  } catch (e) {
-    document.getElementById('securityErr').textContent = e.message;
-  }
-};
+function startAgents() {
+  if (agentsTimer) clearInterval(agentsTimer);
+  loadAgents();
+  agentsTimer = setInterval(loadAgents, 15000);
+}
 
-document.getElementById('setup2fa').onclick = async () => {
-  document.getElementById('securityErr').textContent = '';
-  document.getElementById('securityOk').textContent = '';
-  try {
-    const setup = await apiFetch('/api/auth/2fa/setup');
-    pendingTwoFactorSecret = setup.secret;
-    document.getElementById('twofaSecret').textContent = setup.secret;
-    document.getElementById('twofaURI').textContent = setup.provisioning_uri;
-    document.getElementById('twofaSetup').style.display = '';
-    document.getElementById('securityOk').textContent = t('Add this secret to your authenticator, then enter a code to enable 2FA.');
-  } catch (e) {
-    document.getElementById('securityErr').textContent = e.message;
-  }
-};
+function stopAgents() {
+  if (agentsTimer) clearInterval(agentsTimer);
+  agentsTimer = null;
+  document.getElementById('agentBody').innerHTML = '';
+  const emptyMsg = document.getElementById('emptyMsg');
+  emptyMsg.style.display = '';
+  emptyMsg.textContent = t('Login to view host agents.');
+}
 
-document.getElementById('enable2fa').onclick = async () => {
-  document.getElementById('securityErr').textContent = '';
-  document.getElementById('securityOk').textContent = '';
-  try {
-    await apiFetch('/api/auth/2fa/enable', {
-      method: 'POST',
-      body: JSON.stringify({ secret: pendingTwoFactorSecret, totp_code: document.getElementById('twofaCode').value.trim() }),
-    });
-    document.getElementById('twofaCode').value = '';
-    document.getElementById('twofaSetup').style.display = 'none';
-    pendingTwoFactorSecret = '';
-    document.getElementById('securityOk').textContent = t('2FA enabled.');
-    await loadSecurity();
-  } catch (e) {
-    document.getElementById('securityErr').textContent = e.message;
-  }
-};
+function onAuthReady(state) {
+  if (state.authenticated) startAgents();
+  else stopAgents();
+}
 
-document.getElementById('disable2fa').onclick = async () => {
-  document.getElementById('securityErr').textContent = '';
-  document.getElementById('securityOk').textContent = '';
-  try {
-    await apiFetch('/api/auth/2fa/disable', {
-      method: 'POST',
-      body: JSON.stringify({
-        current_password: document.getElementById('currentPassword').value,
-        totp_code: document.getElementById('twofaCode').value.trim(),
-      }),
-    });
-    document.getElementById('twofaCode').value = '';
-    document.getElementById('securityOk').textContent = t('2FA disabled.');
-    await loadSecurity();
-  } catch (e) {
-    document.getElementById('securityErr').textContent = e.message;
-  }
-};
-
-loadAgents();
-loadSecurity();
-setInterval(loadAgents, 15000);
-window.addEventListener('mcmon-auth-change', () => { loadAgents(); loadSecurity(); });
+window.mcmonAuth.onReady(onAuthReady);
+window.mcmonAuth.onChange(state => {
+  if (state.authenticated) startAgents();
+  else stopAgents();
+});
 </script>
 
 </body>

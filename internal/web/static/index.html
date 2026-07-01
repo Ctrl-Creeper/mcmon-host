@@ -6,8 +6,8 @@
 <title>MCMon Host - Dashboard</title>
 <link rel="stylesheet" href="/style.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script src="/i18n.js" defer></script>
-<script src="/auth.js" defer></script>
+<script src="/i18n.js"></script>
+<script src="/auth.js"></script>
 </head>
 <body>
 
@@ -15,6 +15,7 @@
   <span class="logo">⚡ MCMon Host</span>
   <a href="/" class="active">Dashboard</a>
   <a href="/agents.html">Agents</a>
+  <a href="/settings.html">Settings</a>
   <span class="spacer"></span>
   <div class="auth-token"></div>
   <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
@@ -60,8 +61,13 @@ function chartColors() {
 }
 
 const miniCharts = {};
+let dashboardTimer = null;
 
 async function loadAll() {
+  if (!window.mcmonAuth?.isAuthenticated) {
+    document.getElementById('serverGrid').innerHTML = '<div class="muted empty-state">Login to view host data.</div>';
+    return;
+  }
   let agents, targets;
   try {
     [agents, targets] = await Promise.all([
@@ -69,7 +75,7 @@ async function loadAll() {
       apiFetch('/api/targets'),
     ]);
   } catch (e) {
-    document.getElementById('serverGrid').innerHTML = '<div class="muted" style="padding:24px;text-align:center;">Login to view host data.</div>';
+    document.getElementById('serverGrid').innerHTML = `<div class="muted empty-state">${esc(e.message || t('Login to view host data.'))}</div>`;
     return;
   }
 
@@ -113,13 +119,18 @@ async function loadAll() {
   }
 
   if (targetList.length === 0) {
-    grid.innerHTML = '<div class="muted" style="padding:24px;text-align:center;">No servers being monitored yet. Connect an agent to get started.</div>';
+    grid.innerHTML = '<div class="muted empty-state">No servers being monitored yet. Connect an agent to get started.</div>';
   }
   window.mcmonI18n?.apply();
 }
 
 async function loadMiniChart(agentId, targetId) {
-  const data = await apiFetch(`/api/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=1h`);
+  let data;
+  try {
+    data = await apiFetch(`/api/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=1h`);
+  } catch {
+    return;
+  }
   const arr = data || [];
 
   const last = arr.length ? arr[arr.length - 1] : null;
@@ -179,9 +190,28 @@ function latencyThumbnailScales(cc) {
   };
 }
 
-loadAll();
-setInterval(loadAll, 30000);
-window.addEventListener('mcmon-auth-change', loadAll);
+function startDashboard() {
+  if (dashboardTimer) clearInterval(dashboardTimer);
+  loadAll();
+  dashboardTimer = setInterval(loadAll, 30000);
+}
+
+function stopDashboard() {
+  if (dashboardTimer) clearInterval(dashboardTimer);
+  dashboardTimer = null;
+  document.getElementById('serverGrid').innerHTML = '<div class="muted empty-state">Login to view host data.</div>';
+}
+
+function onAuthReady(state) {
+  if (state.authenticated) startDashboard();
+  else stopDashboard();
+}
+
+window.mcmonAuth.onReady(onAuthReady);
+window.mcmonAuth.onChange(state => {
+  if (state.authenticated) startDashboard();
+  else stopDashboard();
+});
 </script>
 
 </body>

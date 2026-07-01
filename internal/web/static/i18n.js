@@ -3,6 +3,7 @@
   const zh = {
     'Dashboard': '仪表盘',
     'Agents': '节点',
+    'Settings': '设置',
     'Username': '用户名',
     'Password': '密码',
     '2FA code': '2FA 验证码',
@@ -16,6 +17,7 @@
     'Signed in as': '已登录为',
     'Login to view host data.': '登录后查看 host 数据。',
     'Login to view host agents.': '登录后查看 host 节点。',
+    'Login to manage account security.': '登录后管理账户安全。',
     'Account security': '账户安全',
     'Current password': '当前密码',
     'New password': '新密码',

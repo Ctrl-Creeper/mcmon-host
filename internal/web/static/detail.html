@@ -8,8 +8,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
-<script src="/i18n.js" defer></script>
-<script src="/auth.js" defer></script>
+<script src="/i18n.js"></script>
+<script src="/auth.js"></script>
 </head>
 <body>
 
@@ -17,6 +17,7 @@
   <span class="logo">⚡ MCMon Host</span>
   <a href="/">Dashboard</a>
   <a href="/agents.html">Agents</a>
+  <a href="/settings.html">Settings</a>
   <span class="spacer"></span>
   <div class="auth-token"></div>
   <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
@@ -98,12 +99,19 @@ if (!agentId || !targetId) { location.href = '/'; }
 const ranges = ['1h','6h','12h','1d','7d','30d'];
 let currentRange = '1h';
 let chart = null;
+let detailTimer = null;
 
 async function loadTarget() {
-  const [agents, targets] = await Promise.all([
-    apiFetch('/api/agents'),
-    apiFetch(`/api/agents/${encodeURIComponent(agentId)}/targets`),
-  ]);
+  let agents, targets;
+  try {
+    [agents, targets] = await Promise.all([
+      apiFetch('/api/agents'),
+      apiFetch(`/api/agents/${encodeURIComponent(agentId)}/targets`),
+    ]);
+  } catch {
+    document.getElementById('serverName').textContent = 'Login required';
+    return false;
+  }
   const agentList = agents || [];
   const targetList = targets || [];
   const agent = agentList.find(a => a.id === agentId);
@@ -111,7 +119,7 @@ async function loadTarget() {
 
   if (!target) {
     document.getElementById('serverName').textContent = 'Server not found';
-    return;
+    return false;
   }
 
   document.title = (target.name || targetId) + ' - MCMon Host';
@@ -120,6 +128,7 @@ async function loadTarget() {
   document.getElementById('agentInfo').textContent = 'Agent: ' + (agent ? agent.name : agentId) + (agent && agent.online ? ' (online)' : ' (offline)');
   document.getElementById('statusDot').className = 'dot ' + (agent && agent.online ? 'online' : 'offline');
   window.mcmonI18n?.apply();
+  return true;
 }
 
 function renderRangeButtons() {
@@ -137,6 +146,7 @@ function renderRangeButtons() {
 document.getElementById('resetZoom').onclick = () => { if (chart) chart.resetZoom(); };
 
 async function refresh() {
+  if (!window.mcmonAuth?.isAuthenticated) return;
   let data;
   try {
     data = await apiFetch(`/api/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=${currentRange}`);
@@ -209,13 +219,33 @@ async function refresh() {
   });
 }
 
-(async () => {
-  await loadTarget();
+async function startDetail() {
+  if (detailTimer) clearInterval(detailTimer);
+  const ok = await loadTarget();
+  if (!ok) return;
   renderRangeButtons();
   await refresh();
-  setInterval(refresh, 30000);
-  window.addEventListener('mcmon-auth-change', refresh);
-})();
+  detailTimer = setInterval(refresh, 30000);
+}
+
+function stopDetail() {
+  if (detailTimer) clearInterval(detailTimer);
+  detailTimer = null;
+  document.getElementById('serverName').textContent = 'Login required';
+  document.getElementById('serverHost').textContent = '—';
+  document.getElementById('agentInfo').textContent = '';
+}
+
+function onAuthReady(state) {
+  if (state.authenticated) startDetail();
+  else stopDetail();
+}
+
+window.mcmonAuth.onReady(onAuthReady);
+window.mcmonAuth.onChange(state => {
+  if (state.authenticated) startDetail();
+  else stopDetail();
+});
 </script>
 
 </body>
