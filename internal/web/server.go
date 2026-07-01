@@ -381,10 +381,11 @@ func requireAdmin(w http.ResponseWriter, r *http.Request, st *store.Store, admin
 	if adminSessionValid(r, st) {
 		return true
 	}
-	if adminToken == "" {
-		return true
-	}
-	if secureEqual(bearerToken(r), adminToken) {
+	// No fallback for an empty adminToken: secureEqual already rejects a
+	// blank token, but an explicit check avoids ever treating "no token
+	// configured" as "no auth required" if an operator clears admin_token
+	// in config.json expecting login/2FA to still gate access.
+	if adminToken != "" && secureEqual(bearerToken(r), adminToken) {
 		return true
 	}
 	http.Error(w, "unauthorized", http.StatusUnauthorized)

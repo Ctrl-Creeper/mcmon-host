@@ -10,7 +10,6 @@ import (
 	"math"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/Ctrl-Creeper/mcmon-host/internal/rpc"
 	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
@@ -364,7 +363,7 @@ func IsSafeID(s string) bool {
 	}
 	for _, r := range s {
 		switch {
-		case unicode.IsLetter(r), unicode.IsDigit(r):
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
 		case r == '-', r == '_':
 		default:
 			return false

@@ -3,6 +3,8 @@ package web
 import (
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Ctrl-Creeper/mcmon-host/internal/store"
 	"github.com/pquerna/otp/totp"
@@ -11,7 +13,44 @@ import (
 const (
 	adminSessionCookie = "mcmon_session"
 	adminSessionTTL    = int64(30 * 24 * 3600)
+
+	loginMaxFails   = 5
+	loginLockoutTTL = time.Minute
 )
+
+// loginLimiter is a lightweight lockout for the single admin account: after
+// loginMaxFails wrong passwords or TOTP codes in a row, further attempts are
+// rejected for loginLockoutTTL. One counter for the whole process is enough
+// here — this host has exactly one admin account, not a per-tenant login.
+// ponytail: global lock, not per-IP; add per-IP tracking if this ever
+// becomes a multi-admin/multi-tenant host.
+type loginLimiter struct {
+	mu       sync.Mutex
+	fails    int
+	lastFail time.Time
+}
+
+func (l *loginLimiter) allow() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if time.Since(l.lastFail) > loginLockoutTTL {
+		l.fails = 0
+	}
+	return l.fails < loginMaxFails
+}
+
+func (l *loginLimiter) fail() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.fails++
+	l.lastFail = time.Now()
+}
+
+func (l *loginLimiter) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.fails = 0
+}
 
 type loginRequest struct {
 	Username string `json:"username"`
@@ -39,9 +78,15 @@ type twoFactorRequest struct {
 }
 
 func registerAuthRoutes(mux *http.ServeMux, st *store.Store, opts Options) {
+	limiter := &loginLimiter{}
+
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !limiter.allow() {
+			http.Error(w, "too many failed login attempts, try again later", http.StatusTooManyRequests)
 			return
 		}
 		var body loginRequest
@@ -54,19 +99,23 @@ func registerAuthRoutes(mux *http.ServeMux, st *store.Store, opts Options) {
 			return
 		}
 		if !ok {
+			limiter.fail()
 			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
 		if admin.TwoFactorSecret != "" {
 			if body.TOTPCode == "" {
+				limiter.fail()
 				http.Error(w, "totp code required", http.StatusUnauthorized)
 				return
 			}
 			if !totp.Validate(body.TOTPCode, admin.TwoFactorSecret) {
+				limiter.fail()
 				http.Error(w, "invalid totp code", http.StatusUnauthorized)
 				return
 			}
 		}
+		limiter.reset()
 		session, err := st.CreateAdminSession(r.UserAgent(), remoteIP(r), adminSessionTTL)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
