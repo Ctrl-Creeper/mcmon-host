@@ -6,15 +6,16 @@
 <title>Settings - MCMon Host</title>
 <link rel="stylesheet" href="/style.css" />
 <script src="/i18n.js"></script>
+<script src="/site.js"></script>
 <script src="/auth.js"></script>
 </head>
-<body>
+<body data-page-title="Settings">
 
 <nav>
-  <span class="logo">⚡ MCMon Host</span>
+  <span class="logo" data-site-brand>⚡ MCMon Host</span>
   <a href="/">Dashboard</a>
-  <a href="/agents.html">Agents</a>
-  <a href="/settings.html" class="active">Settings</a>
+  <a href="/agents">Agents</a>
+  <a href="/settings" class="active">Settings</a>
   <span class="spacer"></span>
   <div class="auth-token"></div>
   <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
@@ -22,7 +23,26 @@
 
 <div class="wrap">
 
-<div class="card" id="securityCard">
+<div class="card" id="appearanceCard" style="display:none;">
+  <div class="card-header">
+    <h2>Site appearance</h2>
+  </div>
+  <div class="security-grid">
+    <label>Site title<input type="text" id="siteTitle" autocomplete="off" placeholder="MCMon Host"></label>
+    <label>Brand name<input type="text" id="brandName" autocomplete="off" placeholder="MCMon Host"></label>
+    <label>Icon URL<input type="text" id="iconUrl" autocomplete="off" placeholder="https://example.com/icon.png"></label>
+    <button class="btn primary" id="saveAppearance" type="button">Save appearance</button>
+  </div>
+  <div class="security-grid icon-grid">
+    <label>Upload icon<input type="file" id="siteIconFile" accept="image/*,.ico"></label>
+    <button class="btn" id="uploadIcon" type="button">Upload icon</button>
+    <button class="btn danger ghost" id="clearIcon" type="button">Clear uploaded icon</button>
+  </div>
+  <div class="err" id="appearanceErr"></div>
+  <div class="ok" id="appearanceOk"></div>
+</div>
+
+<div class="card" id="securityCard" style="display:none;">
   <div class="card-header">
     <h2>Account security</h2>
   </div>
@@ -68,6 +88,18 @@ function applyTheme(dark) {
 themeBtn.onclick = () => { applyTheme(!document.body.classList.contains('dark')); };
 applyTheme(localStorage.getItem('mcmon-theme') === 'dark' || (!localStorage.getItem('mcmon-theme') && matchMedia('(prefers-color-scheme:dark)').matches));
 
+function setAppearanceMessage(type, text) {
+  document.getElementById('appearanceErr').textContent = type === 'err' ? text : '';
+  document.getElementById('appearanceOk').textContent = type === 'ok' ? text : '';
+}
+
+async function loadAppearance() {
+  const settings = await window.mcmonSite.refresh();
+  document.getElementById('siteTitle').value = settings.site_title || 'MCMon Host';
+  document.getElementById('brandName').value = settings.brand_name || 'MCMon Host';
+  document.getElementById('iconUrl').value = settings.icon_url && settings.icon_url !== '/favicon.ico' ? settings.icon_url : '';
+}
+
 async function loadSecurity() {
   if (!window.mcmonAuth?.isAuthenticated) {
     showSecurity(false);
@@ -75,14 +107,70 @@ async function loadSecurity() {
   }
   const me = window.mcmonAuth.user || {};
   showSecurity(true);
+  await loadAppearance().catch(() => {});
   document.getElementById('securityUsername').value = me.username || 'admin';
   document.getElementById('twofaStatus').textContent = `${t('2FA status')}: ${me.totp_enabled ? t('Enabled') : t('Disabled')}`;
 }
 
 function showSecurity(show) {
+  document.getElementById('appearanceCard').style.display = show ? '' : 'none';
   document.getElementById('securityCard').style.display = show ? '' : 'none';
   document.getElementById('settingsLoginCard').style.display = show ? 'none' : '';
 }
+
+document.getElementById('saveAppearance').onclick = async () => {
+  setAppearanceMessage('', '');
+  try {
+    const settings = await apiFetch('/api/site-settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        site_title: document.getElementById('siteTitle').value.trim(),
+        brand_name: document.getElementById('brandName').value.trim(),
+        icon_url: document.getElementById('iconUrl').value.trim(),
+      }),
+    });
+    window.mcmonSite.apply(settings);
+    setAppearanceMessage('ok', t('Appearance saved.'));
+  } catch (e) {
+    setAppearanceMessage('err', e.message);
+  }
+};
+
+document.getElementById('uploadIcon').onclick = async () => {
+  setAppearanceMessage('', '');
+  const file = document.getElementById('siteIconFile').files[0];
+  if (!file) {
+    setAppearanceMessage('err', t('Choose an icon file first.'));
+    return;
+  }
+  try {
+    const res = await fetch('/api/site-icon', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': file.type || 'image/png' },
+      body: file,
+    });
+    if (!res.ok) throw new Error((await res.text()).trim());
+    const settings = await res.json();
+    window.mcmonSite.apply(settings);
+    document.getElementById('iconUrl').value = '';
+    setAppearanceMessage('ok', t('Icon uploaded.'));
+  } catch (e) {
+    setAppearanceMessage('err', e.message);
+  }
+};
+
+document.getElementById('clearIcon').onclick = async () => {
+  setAppearanceMessage('', '');
+  try {
+    const settings = await apiFetch('/api/site-icon', { method: 'DELETE' });
+    window.mcmonSite.apply(settings);
+    await loadAppearance();
+    setAppearanceMessage('ok', t('Uploaded icon cleared.'));
+  } catch (e) {
+    setAppearanceMessage('err', e.message);
+  }
+};
 
 document.getElementById('savePassword').onclick = async () => {
   document.getElementById('securityErr').textContent = '';

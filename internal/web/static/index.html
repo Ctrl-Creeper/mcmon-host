@@ -7,15 +7,16 @@
 <link rel="stylesheet" href="/style.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="/i18n.js"></script>
+<script src="/site.js"></script>
 <script src="/auth.js"></script>
 </head>
-<body>
+<body data-page-title="Dashboard">
 
 <nav>
-  <span class="logo">⚡ MCMon Host</span>
+  <span class="logo" data-site-brand>⚡ MCMon Host</span>
   <a href="/" class="active">Dashboard</a>
-  <a href="/agents.html">Agents</a>
-  <a href="/settings.html">Settings</a>
+  <a href="/agents">Agents</a>
+  <a href="/settings">Settings</a>
   <span class="spacer"></span>
   <div class="auth-token"></div>
   <button class="theme-toggle" id="themeBtn" title="Toggle theme">🌙</button>
@@ -110,7 +111,7 @@ async function loadAll() {
     const agent = agentMap[t.agent_id] || {};
     const card = document.createElement('div');
     card.className = 'server-card';
-    card.onclick = () => { location.href = `/detail.html?agent=${encodeURIComponent(t.agent_id)}&target=${encodeURIComponent(t.target_id)}`; };
+    card.onclick = () => { location.href = `/detail?agent=${encodeURIComponent(t.agent_id)}&target=${encodeURIComponent(t.target_id)}`; };
 
     const isOnline = agent.online || false;
     card.innerHTML = `

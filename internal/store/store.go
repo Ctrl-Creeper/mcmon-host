@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -45,6 +46,17 @@ type AdminSession struct {
 	RemoteIP  string `json:"remote_ip,omitempty"`
 	ExpiresAt int64  `json:"expires_at"`
 	CreatedAt int64  `json:"created_at,omitempty"`
+}
+
+type SiteSettings struct {
+	SiteTitle string `json:"site_title"`
+	BrandName string `json:"brand_name"`
+	IconURL   string `json:"icon_url,omitempty"`
+}
+
+type SiteIcon struct {
+	MimeType string
+	Data     []byte
 }
 
 type AgentTarget struct {
@@ -185,6 +197,15 @@ func Open(path string) (*Store, error) {
 			created_at INTEGER NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
+		CREATE TABLE IF NOT EXISTS site_settings (
+			id          INTEGER PRIMARY KEY CHECK (id = 1),
+			site_title  TEXT NOT NULL,
+			brand_name  TEXT NOT NULL,
+			icon_url    TEXT NOT NULL DEFAULT '',
+			icon_mime   TEXT NOT NULL DEFAULT '',
+			icon_data   BLOB,
+			updated_at  INTEGER NOT NULL
+		);
 	`); err != nil {
 		db.Close()
 		return nil, err
@@ -198,6 +219,9 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE agent_targets ADD COLUMN public_visible INTEGER NOT NULL DEFAULT 1`,
 		`ALTER TABLE agent_targets ADD COLUMN monitors_json TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE admin_auth ADD COLUMN two_factor_secret TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE site_settings ADD COLUMN icon_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE site_settings ADD COLUMN icon_mime TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE site_settings ADD COLUMN icon_data BLOB`,
 	} {
 		_, _ = db.Exec(stmt)
 	}
@@ -401,6 +425,87 @@ func (s *Store) DeleteAdminSession(token string) error {
 func (s *Store) DeleteOtherAdminSessions(currentToken string) error {
 	_, err := s.db.Exec(`DELETE FROM admin_sessions WHERE token<>?`, currentToken)
 	return err
+}
+
+func (s *Store) SiteSettings() (SiteSettings, error) {
+	settings := defaultSiteSettings()
+	err := s.db.QueryRow(`SELECT site_title, brand_name, icon_url FROM site_settings WHERE id=1`).
+		Scan(&settings.SiteTitle, &settings.BrandName, &settings.IconURL)
+	if err == sql.ErrNoRows {
+		return settings, nil
+	}
+	if err != nil {
+		return SiteSettings{}, err
+	}
+	return normalizeSiteSettings(settings), nil
+}
+
+func (s *Store) UpdateSiteSettings(settings SiteSettings) error {
+	settings = normalizeSiteSettings(settings)
+	_, err := s.db.Exec(
+		`INSERT INTO site_settings (id, site_title, brand_name, icon_url, updated_at)
+		 VALUES (1, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		 site_title=excluded.site_title,
+		 brand_name=excluded.brand_name,
+		 icon_url=excluded.icon_url,
+		 updated_at=excluded.updated_at`,
+		settings.SiteTitle, settings.BrandName, settings.IconURL, time.Now().Unix(),
+	)
+	return err
+}
+
+func (s *Store) UpdateSiteIcon(mimeType string, data []byte) error {
+	mimeType = strings.TrimSpace(mimeType)
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO site_settings (id, site_title, brand_name, icon_url, icon_mime, icon_data, updated_at)
+		 VALUES (1, ?, ?, '', ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		 icon_mime=excluded.icon_mime,
+		 icon_data=excluded.icon_data,
+		 updated_at=excluded.updated_at`,
+		defaultSiteSettings().SiteTitle, defaultSiteSettings().BrandName, mimeType, data, time.Now().Unix(),
+	)
+	return err
+}
+
+func (s *Store) SiteIcon() (SiteIcon, bool, error) {
+	var icon SiteIcon
+	err := s.db.QueryRow(`SELECT icon_mime, icon_data FROM site_settings WHERE id=1 AND icon_data IS NOT NULL AND length(icon_data)>0`).
+		Scan(&icon.MimeType, &icon.Data)
+	if err == sql.ErrNoRows {
+		return SiteIcon{}, false, nil
+	}
+	if err != nil {
+		return SiteIcon{}, false, err
+	}
+	return icon, true, nil
+}
+
+func (s *Store) DeleteSiteIcon() error {
+	_, err := s.db.Exec(`UPDATE site_settings SET icon_mime='', icon_data=NULL, updated_at=? WHERE id=1`, time.Now().Unix())
+	return err
+}
+
+func defaultSiteSettings() SiteSettings {
+	return SiteSettings{SiteTitle: "MCMon Host", BrandName: "MCMon Host"}
+}
+
+func normalizeSiteSettings(settings SiteSettings) SiteSettings {
+	settings.SiteTitle = strings.TrimSpace(settings.SiteTitle)
+	settings.BrandName = strings.TrimSpace(settings.BrandName)
+	settings.IconURL = strings.TrimSpace(settings.IconURL)
+	defaults := defaultSiteSettings()
+	if settings.SiteTitle == "" {
+		settings.SiteTitle = defaults.SiteTitle
+	}
+	if settings.BrandName == "" {
+		settings.BrandName = defaults.BrandName
+	}
+	return settings
 }
 
 func (s *Store) CreateAgent(a Agent) error {

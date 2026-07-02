@@ -1,14 +1,17 @@
 package web
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -61,7 +64,7 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 	if err != nil {
 		panic(err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(sub)))
+	mux.Handle("/", staticFileHandler(sub))
 
 	// --- Agent WebSocket ---
 	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -154,6 +157,103 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 
 	// --- REST API for dashboard / app ---
 	registerAuthRoutes(mux, st, opts)
+
+	mux.HandleFunc("/api/site-settings", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			settings, err := siteSettingsForResponse(st)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, settings)
+		case http.MethodPut:
+			if !requireAdmin(w, r, st, opts.AdminToken) {
+				return
+			}
+			var settings store.SiteSettings
+			if !decodeJSON(w, r, &settings) {
+				return
+			}
+			if err := st.UpdateSiteSettings(settings); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			settings, err := siteSettingsForResponse(st)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, settings)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/api/site-icon", func(w http.ResponseWriter, r *http.Request) {
+		if !requireAdmin(w, r, st, opts.AdminToken) {
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			contentType := strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])
+			if !isIconContentType(contentType) {
+				http.Error(w, "content type must be an image", http.StatusBadRequest)
+				return
+			}
+			defer r.Body.Close()
+			data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+			if err != nil {
+				http.Error(w, "icon is too large or unreadable", http.StatusBadRequest)
+				return
+			}
+			if len(data) == 0 {
+				http.Error(w, "icon is empty", http.StatusBadRequest)
+				return
+			}
+			if err := st.UpdateSiteIcon(contentType, data); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			settings, err := siteSettingsForResponse(st)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, settings)
+		case http.MethodDelete:
+			if err := st.DeleteSiteIcon(); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			settings, err := siteSettingsForResponse(st)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, settings)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		icon, ok, err := st.SiteIcon()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", icon.MimeType)
+		w.Write(icon.Data)
+	})
 
 	mux.HandleFunc("/api/agents", func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r, st, opts.AdminToken) {
@@ -431,6 +531,55 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 	})
 
 	return mux
+}
+
+func staticFileHandler(fsys fs.FS) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		clean := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		switch clean {
+		case "", ".":
+			clean = "index.html"
+		case "agents":
+			clean = "agents.html"
+		case "settings":
+			clean = "settings.html"
+		case "detail":
+			clean = "detail.html"
+		}
+		data, err := fs.ReadFile(fsys, clean)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		modTime := time.Time{}
+		if info, err := fs.Stat(fsys, clean); err == nil {
+			modTime = info.ModTime()
+		}
+		http.ServeContent(w, r, clean, modTime, bytes.NewReader(data))
+	})
+}
+
+func siteSettingsForResponse(st *store.Store) (store.SiteSettings, error) {
+	settings, err := st.SiteSettings()
+	if err != nil {
+		return store.SiteSettings{}, err
+	}
+	if _, ok, err := st.SiteIcon(); err != nil {
+		return store.SiteSettings{}, err
+	} else if ok {
+		settings.IconURL = "/favicon.ico"
+	}
+	return settings, nil
+}
+
+func isIconContentType(contentType string) bool {
+	return strings.HasPrefix(contentType, "image/") ||
+		contentType == "application/x-ico" ||
+		contentType == "application/octet-stream"
 }
 
 func publicTargetVisible(w http.ResponseWriter, st *store.Store, agentID, targetID string) bool {

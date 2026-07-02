@@ -49,6 +49,40 @@ func TestAccountSecurityLivesOnSettingsPage(t *testing.T) {
 	}
 }
 
+func TestStaticPagesUseSiteBrandingScript(t *testing.T) {
+	site := readStaticFile(t, "site.js")
+	for _, want := range []string{"/api/site-settings", "data-site-brand", "favicon"} {
+		if !strings.Contains(site, want) {
+			t.Fatalf("site.js missing branding marker %q", want)
+		}
+	}
+
+	for _, page := range []string{"index.html", "agents.html", "detail.html", "settings.html"} {
+		body := readStaticFile(t, page)
+		if !strings.Contains(body, `src="/site.js"`) || !strings.Contains(body, "data-site-brand") {
+			t.Fatalf("%s does not load shared site branding", page)
+		}
+	}
+}
+
+func TestStaticPagesUseCleanRoutesAndSettingsAppearanceControls(t *testing.T) {
+	for _, page := range []string{"index.html", "agents.html", "detail.html", "settings.html"} {
+		body := readStaticFile(t, page)
+		for _, unwanted := range []string{`href="/agents.html"`, `href="/settings.html"`, "`/detail.html?"} {
+			if strings.Contains(body, unwanted) {
+				t.Fatalf("%s still references legacy route %q", page, unwanted)
+			}
+		}
+	}
+
+	settings := readStaticFile(t, "settings.html")
+	for _, want := range []string{"appearanceCard", "siteTitle", "brandName", "iconUrl", "siteIconFile"} {
+		if !strings.Contains(settings, want) {
+			t.Fatalf("settings.html missing appearance control marker %q", want)
+		}
+	}
+}
+
 func TestAgentTargetEditorIncludesPublicVisibilityControl(t *testing.T) {
 	agents := readStaticFile(t, "agents.html")
 	for _, want := range []string{"public_visible", "Publicly visible"} {

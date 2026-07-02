@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,87 @@ func TestAdminAPIsRequireAdminTokenWhenConfigured(t *testing.T) {
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /api/agents with admin token = %d, want %d: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestCleanStaticRoutesAndLegacyHTMLRoutes(t *testing.T) {
+	_, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/", "MCMon Host - Dashboard"},
+		{"/agents", "Agents - MCMon Host"},
+		{"/agents.html", "Agents - MCMon Host"},
+		{"/settings", "Settings - MCMon Host"},
+		{"/settings.html", "Settings - MCMon Host"},
+		{"/detail", "Server Detail - MCMon Host"},
+		{"/detail.html", "Server Detail - MCMon Host"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), tc.want) {
+			t.Fatalf("GET %s = %d body has %q? %v", tc.path, rr.Code, tc.want, strings.Contains(rr.Body.String(), tc.want))
+		}
+	}
+}
+
+func TestSiteSettingsAPIAndFavicon(t *testing.T) {
+	_, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/site-settings", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/site-settings = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var settings store.SiteSettings
+	if err := json.NewDecoder(rr.Body).Decode(&settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.SiteTitle != "MCMon Host" || settings.BrandName != "MCMon Host" {
+		t.Fatalf("default settings = %#v", settings)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/site-settings", bytes.NewReader([]byte(`{"site_title":"My Monitor","brand_name":"My Brand","icon_url":"https://example.com/icon.png"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("PUT /api/site-settings without auth = %d, want 401", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/site-settings", bytes.NewReader([]byte(`{"site_title":"My Monitor","brand_name":"My Brand","icon_url":"https://example.com/icon.png"}`)))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT /api/site-settings = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	settings = store.SiteSettings{}
+	if err := json.NewDecoder(rr.Body).Decode(&settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.SiteTitle != "My Monitor" || settings.BrandName != "My Brand" || settings.IconURL != "https://example.com/icon.png" {
+		t.Fatalf("updated settings = %#v", settings)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/site-icon", bytes.NewReader([]byte("icon-bytes")))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "image/png")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT /api/site-icon = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "icon-bytes" || rr.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("GET /favicon.ico status=%d content-type=%q body=%q", rr.Code, rr.Header().Get("Content-Type"), rr.Body.String())
 	}
 }
 
