@@ -101,15 +101,31 @@ let currentRange = '1h';
 let chart = null;
 let detailTimer = null;
 
+async function publicJSON(url) {
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Request failed');
+  return res.json();
+}
+
+function seriesURL(adminView) {
+  const base = adminView ? '/api/series' : '/api/public/series';
+  return `${base}?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=${currentRange}`;
+}
+
 async function loadTarget() {
-  let agents, targets;
+  const adminView = Boolean(window.mcmonAuth?.isAuthenticated);
+  let agents = [], targets;
   try {
-    [agents, targets] = await Promise.all([
-      apiFetch('/api/agents'),
-      apiFetch(`/api/agents/${encodeURIComponent(agentId)}/targets`),
-    ]);
+    if (adminView) {
+      [agents, targets] = await Promise.all([
+        apiFetch('/api/agents'),
+        apiFetch(`/api/agents/${encodeURIComponent(agentId)}/targets`),
+      ]);
+    } else {
+      targets = await publicJSON('/api/public/targets');
+    }
   } catch {
-    document.getElementById('serverName').textContent = 'Login required';
+    document.getElementById('serverName').textContent = 'Server not found';
     return false;
   }
   const agentList = agents || [];
@@ -125,7 +141,9 @@ async function loadTarget() {
   document.title = (target.name || targetId) + ' - MCMon Host';
   document.getElementById('serverName').textContent = target.name || targetId;
   document.getElementById('serverHost').textContent = target.host + ':' + target.port;
-  document.getElementById('agentInfo').textContent = 'Agent: ' + (agent ? agent.name : agentId) + (agent && agent.online ? ' (online)' : ' (offline)');
+  document.getElementById('agentInfo').textContent = adminView
+    ? 'Agent: ' + (agent ? agent.name : agentId) + (agent && agent.online ? ' (online)' : ' (offline)')
+    : 'Public server';
   document.getElementById('statusDot').className = 'dot ' + (agent && agent.online ? 'online' : 'offline');
   window.mcmonI18n?.apply();
   return true;
@@ -146,10 +164,10 @@ function renderRangeButtons() {
 document.getElementById('resetZoom').onclick = () => { if (chart) chart.resetZoom(); };
 
 async function refresh() {
-  if (!window.mcmonAuth?.isAuthenticated) return;
+  const adminView = Boolean(window.mcmonAuth?.isAuthenticated);
   let data;
   try {
-    data = await apiFetch(`/api/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=${currentRange}`);
+    data = adminView ? await apiFetch(seriesURL(true)) : await publicJSON(seriesURL(false));
   } catch (e) {
     return;
   }
@@ -161,6 +179,7 @@ async function refresh() {
   const statusEl = document.getElementById('statStatus');
   statusEl.textContent = isOnline ? 'Online' : 'Offline';
   statusEl.className = 'stat-value ' + (isOnline ? 'green' : 'red');
+  document.getElementById('statusDot').className = 'dot ' + (isOnline ? 'online' : 'offline');
 
   document.getElementById('statMedian').textContent = last && last.p50_ms != null ? last.p50_ms.toFixed(1) + ' ms' : '—';
   document.getElementById('statMin').textContent = last && last.min_ms != null ? last.min_ms.toFixed(1) + ' ms' : '—';
@@ -228,24 +247,12 @@ async function startDetail() {
   detailTimer = setInterval(refresh, 30000);
 }
 
-function stopDetail() {
-  if (detailTimer) clearInterval(detailTimer);
-  detailTimer = null;
-  document.getElementById('serverName').textContent = 'Login required';
-  document.getElementById('serverHost').textContent = '—';
-  document.getElementById('agentInfo').textContent = '';
-}
-
-function onAuthReady(state) {
-  if (state.authenticated) startDetail();
-  else stopDetail();
+function onAuthReady() {
+  startDetail();
 }
 
 window.mcmonAuth.onReady(onAuthReady);
-window.mcmonAuth.onChange(state => {
-  if (state.authenticated) startDetail();
-  else stopDetail();
-});
+window.mcmonAuth.onChange(startDetail);
 </script>
 
 </body>

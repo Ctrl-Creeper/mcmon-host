@@ -56,4 +56,39 @@ func TestAgentTargetEditorIncludesPublicVisibilityControl(t *testing.T) {
 			t.Fatalf("agents.html missing target visibility control marker %q", want)
 		}
 	}
+
+	style := readStaticFile(t, "style.css")
+	for _, want := range []string{".visibility-toggle", ".visibility-toggle input[type=\"checkbox\"]"} {
+		if !strings.Contains(style, want) {
+			t.Fatalf("style.css missing compact visibility toggle style %q", want)
+		}
+	}
+}
+
+func TestPublicDashboardUsesPublicAPIsForGuests(t *testing.T) {
+	index := readStaticFile(t, "index.html")
+	for _, want := range []string{"/api/public/targets", "/api/public/series"} {
+		if !strings.Contains(index, want) {
+			t.Fatalf("index.html missing guest public API marker %q", want)
+		}
+	}
+	for _, unwanted := range []string{"Login to view host data.", "else stopDashboard()"} {
+		if strings.Contains(index, unwanted) {
+			t.Fatalf("index.html still blocks guest dashboard with %q", unwanted)
+		}
+	}
+}
+
+func TestPublicDetailUsesPublicAPIsForGuests(t *testing.T) {
+	detail := readStaticFile(t, "detail.html")
+	for _, want := range []string{"/api/public/targets", "/api/public/series"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail.html missing guest public API marker %q", want)
+		}
+	}
+	for _, unwanted := range []string{"Login required", "if (!window.mcmonAuth?.isAuthenticated) return", "else stopDetail()"} {
+		if strings.Contains(detail, unwanted) {
+			t.Fatalf("detail.html still blocks guest detail with %q", unwanted)
+		}
+	}
 }

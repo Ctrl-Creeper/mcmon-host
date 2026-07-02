@@ -17,6 +17,7 @@
     'Signed in as': '已登录为',
     'Login to view host data.': '登录后查看 host 数据。',
     'Login to view host agents.': '登录后查看 host 节点。',
+    'Unable to load server data.': '无法加载服务器数据。',
     'Login to manage account security.': '登录后管理账户安全。',
     'Account security': '账户安全',
     'Current password': '当前密码',
@@ -88,6 +89,7 @@
     'Loss': '丢包',
     'Server Detail': '服务器详情',
     'Back to Dashboard': '返回仪表盘',
+    'Public server': '公开服务器',
   };
 
   function defaultLanguage() {

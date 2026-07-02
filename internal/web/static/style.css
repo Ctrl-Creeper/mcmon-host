@@ -221,6 +221,23 @@ tbody tr:hover { background: var(--bg-card-hover); }
   gap: 12px;
   margin-bottom: 14px;
 }
+.visibility-toggle {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 0 0 14px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+.visibility-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
 .monitor-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

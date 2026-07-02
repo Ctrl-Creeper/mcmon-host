@@ -63,19 +63,30 @@ function chartColors() {
 const miniCharts = {};
 let dashboardTimer = null;
 
+async function publicJSON(url) {
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'Request failed');
+  return res.json();
+}
+
+function dataFetch(adminView, adminURL, publicURL) {
+  return adminView ? apiFetch(adminURL) : publicJSON(publicURL);
+}
+
 async function loadAll() {
-  if (!window.mcmonAuth?.isAuthenticated) {
-    document.getElementById('serverGrid').innerHTML = '<div class="muted empty-state">Login to view host data.</div>';
-    return;
-  }
-  let agents, targets;
+  const adminView = Boolean(window.mcmonAuth?.isAuthenticated);
+  let agents = [], targets;
   try {
-    [agents, targets] = await Promise.all([
-      apiFetch('/api/agents'),
-      apiFetch('/api/targets'),
-    ]);
+    if (adminView) {
+      [agents, targets] = await Promise.all([
+        apiFetch('/api/agents'),
+        apiFetch('/api/targets'),
+      ]);
+    } else {
+      targets = await publicJSON('/api/public/targets');
+    }
   } catch (e) {
-    document.getElementById('serverGrid').innerHTML = `<div class="muted empty-state">${esc(e.message || t('Login to view host data.'))}</div>`;
+    document.getElementById('serverGrid').innerHTML = `<div class="muted empty-state">${esc(e.message || t('Unable to load server data.'))}</div>`;
     return;
   }
 
@@ -83,9 +94,9 @@ async function loadAll() {
   const targetList = targets || [];
   const online = agentList.filter(a => a.online).length;
 
-  document.getElementById('statAgents').textContent = agentList.length;
-  document.getElementById('statOnline').textContent = online;
-  document.getElementById('statOffline').textContent = agentList.length - online;
+  document.getElementById('statAgents').textContent = adminView ? agentList.length : new Set(targetList.map(t => t.agent_id)).size;
+  document.getElementById('statOnline').textContent = adminView ? online : '—';
+  document.getElementById('statOffline').textContent = adminView ? agentList.length - online : '—';
   document.getElementById('statServers').textContent = targetList.length;
 
   const agentMap = {};
@@ -93,6 +104,7 @@ async function loadAll() {
 
   const grid = document.getElementById('serverGrid');
   grid.innerHTML = '';
+  const chartLoads = [];
 
   for (const t of targetList) {
     const agent = agentMap[t.agent_id] || {};
@@ -103,7 +115,7 @@ async function loadAll() {
     const isOnline = agent.online || false;
     card.innerHTML = `
       <div class="server-header">
-        <span class="dot ${isOnline ? 'online' : 'offline'}"></span>
+        <span class="dot ${isOnline ? 'online' : 'offline'}" id="dot-${t.agent_id}-${t.target_id}"></span>
         <span class="server-name">${esc(t.name)}</span>
       </div>
       <div class="server-host">${esc(t.host)}:${t.port} · Agent: ${esc(agent.name || t.agent_id)}</div>
@@ -115,25 +127,37 @@ async function loadAll() {
     `;
     grid.appendChild(card);
 
-    loadMiniChart(t.agent_id, t.target_id);
+    chartLoads.push(loadMiniChart(t.agent_id, t.target_id, adminView));
   }
 
   if (targetList.length === 0) {
     grid.innerHTML = '<div class="muted empty-state">No servers being monitored yet. Connect an agent to get started.</div>';
+  } else if (!adminView) {
+    const states = await Promise.all(chartLoads);
+    const onlineServers = states.filter(Boolean).length;
+    document.getElementById('statOnline').textContent = onlineServers;
+    document.getElementById('statOffline').textContent = targetList.length - onlineServers;
   }
   window.mcmonI18n?.apply();
 }
 
-async function loadMiniChart(agentId, targetId) {
+async function loadMiniChart(agentId, targetId, adminView) {
   let data;
   try {
-    data = await apiFetch(`/api/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=1h`);
+    data = await dataFetch(
+      adminView,
+      `/api/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=1h`,
+      `/api/public/series?agent=${encodeURIComponent(agentId)}&target=${encodeURIComponent(targetId)}&range=1h`
+    );
   } catch {
-    return;
+    return false;
   }
   const arr = data || [];
 
   const last = arr.length ? arr[arr.length - 1] : null;
+  const isOnline = last && last.p50_ms != null && last.loss_pct < 1;
+  const dotEl = document.getElementById(`dot-${agentId}-${targetId}`);
+  if (dotEl) dotEl.className = 'dot ' + (isOnline ? 'online' : 'offline');
   const medEl = document.getElementById(`stat-med-${agentId}-${targetId}`);
   const lossEl = document.getElementById(`stat-loss-${agentId}-${targetId}`);
   if (medEl && last) {
@@ -148,7 +172,7 @@ async function loadMiniChart(agentId, targetId) {
   if (miniCharts[key]) miniCharts[key].destroy();
 
   const canvas = document.getElementById(`chart-${agentId}-${targetId}`);
-  if (!canvas) return;
+  if (!canvas) return Boolean(isOnline);
   const cc = chartColors();
 
   miniCharts[key] = new Chart(canvas.getContext('2d'), {
@@ -171,6 +195,7 @@ async function loadMiniChart(agentId, targetId) {
       scales: latencyThumbnailScales(cc),
     },
   });
+  return Boolean(isOnline);
 }
 
 function latencyThumbnailScales(cc) {
@@ -196,22 +221,12 @@ function startDashboard() {
   dashboardTimer = setInterval(loadAll, 30000);
 }
 
-function stopDashboard() {
-  if (dashboardTimer) clearInterval(dashboardTimer);
-  dashboardTimer = null;
-  document.getElementById('serverGrid').innerHTML = '<div class="muted empty-state">Login to view host data.</div>';
-}
-
-function onAuthReady(state) {
-  if (state.authenticated) startDashboard();
-  else stopDashboard();
+function onAuthReady() {
+  startDashboard();
 }
 
 window.mcmonAuth.onReady(onAuthReady);
-window.mcmonAuth.onChange(state => {
-  if (state.authenticated) startDashboard();
-  else stopDashboard();
-});
+window.mcmonAuth.onChange(startDashboard);
 </script>
 
 </body>
