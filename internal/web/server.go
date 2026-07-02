@@ -319,12 +319,49 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 		writeJSON(w, targets)
 	})
 
+	mux.HandleFunc("/api/public/targets", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		targets, err := st.PublicTargets()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, targets)
+	})
+
 	mux.HandleFunc("/api/series", func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r, st, opts.AdminToken) {
 			return
 		}
 		agentID := r.URL.Query().Get("agent")
 		targetID := r.URL.Query().Get("target")
+		rangeKey := r.URL.Query().Get("range")
+		secs, ok := rangeToSeconds[rangeKey]
+		if !ok {
+			secs = 3600
+		}
+		since := time.Now().Unix() - secs
+		series, err := st.Series(agentID, targetID, since)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, series)
+	})
+
+	mux.HandleFunc("/api/public/series", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		agentID := r.URL.Query().Get("agent")
+		targetID := r.URL.Query().Get("target")
+		if !publicTargetVisible(w, st, agentID, targetID) {
+			return
+		}
 		rangeKey := r.URL.Query().Get("range")
 		secs, ok := rangeToSeconds[rangeKey]
 		if !ok {
@@ -364,7 +401,53 @@ func NewMux(st *store.Store, h *hub.Hub, opts Options) *http.ServeMux {
 		writeJSON(w, series)
 	})
 
+	mux.HandleFunc("/api/public/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		agentID := r.URL.Query().Get("agent")
+		targetID := r.URL.Query().Get("target")
+		metric := r.URL.Query().Get("metric")
+		if agentID == "" || targetID == "" || metric == "" {
+			http.Error(w, "agent, target and metric are required", http.StatusBadRequest)
+			return
+		}
+		if !publicTargetVisible(w, st, agentID, targetID) {
+			return
+		}
+		rangeKey := r.URL.Query().Get("range")
+		secs, ok := rangeToSeconds[rangeKey]
+		if !ok {
+			secs = 3600
+		}
+		since := time.Now().Unix() - secs
+		series, err := st.MetricSeries(agentID, targetID, metric, since)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, series)
+	})
+
 	return mux
+}
+
+func publicTargetVisible(w http.ResponseWriter, st *store.Store, agentID, targetID string) bool {
+	if agentID == "" || targetID == "" {
+		http.Error(w, "agent and target are required", http.StatusBadRequest)
+		return false
+	}
+	visible, err := st.TargetPublicVisible(agentID, targetID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	if !visible {
+		http.NotFound(w, nil)
+		return false
+	}
+	return true
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {

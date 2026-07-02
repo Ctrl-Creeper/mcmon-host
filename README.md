@@ -202,6 +202,7 @@ Targets are stored per agent. A target looks like this:
   "host": "mc.example.com",
   "port": 25565,
   "timeout_ms": 1500,
+  "public_visible": true,
   "monitors": {
     "online": {
       "enabled": true,
@@ -230,6 +231,11 @@ Targets are stored per agent. A target looks like this:
 
 `protocol_version` is only used by the latency monitor. Other monitors use the
 standard status request path.
+
+`public_visible` controls whether the target is exposed by public read-only
+endpoints. Admin pages and admin APIs always show every configured target.
+Existing targets default to `true` during upgrade; set it to `false` in the
+target form to keep a server private while monitoring continues.
 
 ## Agent Installation
 
@@ -269,6 +275,9 @@ Main endpoints:
 - `GET /api/targets`
 - `GET /api/series?agent=...&target=...&range=...`
 - `GET /api/metrics?agent=...&target=...&metric=...&range=...`
+- `GET /api/public/targets`
+- `GET /api/public/series?agent=...&target=...&range=...`
+- `GET /api/public/metrics?agent=...&target=...&metric=...&range=...`
 - `GET /api/ws`
 - `GET|POST /api/agents/v2/rpc`
 

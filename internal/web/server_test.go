@@ -256,6 +256,86 @@ func TestDeleteAgentRemovesTargetsAndSamples(t *testing.T) {
 	}
 }
 
+func TestPublicTargetsOnlyReturnPublicVisibleTargets(t *testing.T) {
+	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+	targets := []store.AgentTarget{
+		{AgentID: "agent-1", TargetID: "public-1", Name: "Public", Host: "public.example.com", Port: 25565},
+		{AgentID: "agent-1", TargetID: "hidden-1", Name: "Hidden", Host: "hidden.example.com", Port: 25565, PublicVisible: false, PublicVisibleSet: true},
+	}
+	if err := st.UpsertTargets("agent-1", targets); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/public/targets", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/public/targets = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var got []store.AgentTarget
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].TargetID != "public-1" {
+		t.Fatalf("public targets = %#v, want only public-1", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/targets", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/targets as admin = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	got = nil
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("admin targets = %#v, want both targets", got)
+	}
+}
+
+func TestPublicSeriesRejectsHiddenTargets(t *testing.T) {
+	st, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
+	targets := []store.AgentTarget{
+		{AgentID: "agent-1", TargetID: "public-1", Name: "Public", Host: "public.example.com", Port: 25565},
+		{AgentID: "agent-1", TargetID: "hidden-1", Name: "Hidden", Host: "hidden.example.com", Port: 25565, PublicVisible: false, PublicVisibleSet: true},
+	}
+	if err := st.UpsertTargets("agent-1", targets); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	value := 1.0
+	if err := st.InsertSample(store.Sample{AgentID: "agent-1", TargetID: "public-1", Ts: now, LossPct: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.InsertMetricSample(store.MetricSample{AgentID: "agent-1", TargetID: "public-1", Metric: "online", Ts: now, Value: &value}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/public/series?agent=agent-1&target=public-1&range=1h", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("public visible series = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/public/series?agent=agent-1&target=hidden-1&range=1h", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("hidden public series = %d, want 404", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/public/metrics?agent=agent-1&target=hidden-1&metric=online&range=1h", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("hidden public metrics = %d, want 404", rr.Code)
+	}
+}
+
 func TestDiscoverStillUsesDiscoveryKey(t *testing.T) {
 	_, mux := newTestServer(t, Options{DiscoveryKey: "discover", AdminToken: "admin-token"})
 

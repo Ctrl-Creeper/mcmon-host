@@ -48,13 +48,35 @@ type AdminSession struct {
 }
 
 type AgentTarget struct {
-	AgentID   string   `json:"agent_id"`
-	TargetID  string   `json:"target_id"`
-	Name      string   `json:"name"`
-	Host      string   `json:"host"`
-	Port      int      `json:"port"`
-	TimeoutMs int      `json:"timeout_ms"`
-	Monitors  Monitors `json:"monitors"`
+	AgentID          string   `json:"agent_id"`
+	TargetID         string   `json:"target_id"`
+	Name             string   `json:"name"`
+	Host             string   `json:"host"`
+	Port             int      `json:"port"`
+	TimeoutMs        int      `json:"timeout_ms"`
+	PublicVisible    bool     `json:"public_visible"`
+	PublicVisibleSet bool     `json:"-"`
+	Monitors         Monitors `json:"monitors"`
+}
+
+func (t *AgentTarget) UnmarshalJSON(data []byte) error {
+	type alias AgentTarget
+	var raw struct {
+		alias
+		PublicVisible *bool `json:"public_visible"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = AgentTarget(raw.alias)
+	if raw.PublicVisible == nil {
+		t.PublicVisible = true
+		t.PublicVisibleSet = false
+		return nil
+	}
+	t.PublicVisible = *raw.PublicVisible
+	t.PublicVisibleSet = true
+	return nil
 }
 
 type Monitors struct {
@@ -122,6 +144,7 @@ func Open(path string) (*Store, error) {
 			host      TEXT NOT NULL,
 			port      INTEGER NOT NULL,
 			timeout_ms INTEGER NOT NULL DEFAULT 1500,
+			public_visible INTEGER NOT NULL DEFAULT 1,
 			monitors_json TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (agent_id, target_id)
 		);
@@ -172,6 +195,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE agents ADD COLUMN last_seen INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE agents ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE agent_targets ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 1500`,
+		`ALTER TABLE agent_targets ADD COLUMN public_visible INTEGER NOT NULL DEFAULT 1`,
 		`ALTER TABLE agent_targets ADD COLUMN monitors_json TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE admin_auth ADD COLUMN two_factor_secret TEXT NOT NULL DEFAULT ''`,
 	} {
@@ -244,6 +268,33 @@ func normalizedTimeout(timeoutMs int) int {
 		return 1500
 	}
 	return timeoutMs
+}
+
+func normalizedPublicVisible(t AgentTarget, existing map[string]existingTargetSetting) bool {
+	if !t.PublicVisibleSet {
+		if setting, ok := existing[t.TargetID]; ok {
+			return setting.PublicVisible
+		}
+		return true
+	}
+	return t.PublicVisible
+}
+
+func normalizedTargetMonitors(t AgentTarget, existing map[string]existingTargetSetting) Monitors {
+	if hasExplicitMonitors(t.Monitors) {
+		return t.Monitors
+	}
+	if setting, ok := existing[t.TargetID]; ok {
+		return setting.Monitors
+	}
+	return t.Monitors
+}
+
+func hasExplicitMonitors(m Monitors) bool {
+	return m.Online.Enabled || m.Players.Enabled || m.Latency.Enabled || m.Loss.Enabled ||
+		m.Online.IntervalSec > 0 || m.Players.IntervalSec > 0 || m.Latency.IntervalSec > 0 || m.Loss.IntervalSec > 0 ||
+		m.Latency.ProbesPerBurst > 0 || m.Latency.ProbeGapMs > 0 || m.Latency.ProtocolVersion > 0 ||
+		m.Loss.ProbesPerBurst > 0 || m.Loss.ProbeGapMs > 0 || m.Loss.ProtocolVersion > 0
 }
 
 // --- Agents ---
@@ -446,17 +497,21 @@ func (s *Store) UpsertTargets(agentID string, targets []AgentTarget) error {
 		return err
 	}
 	defer tx.Rollback()
+	existingByTarget, err := existingTargetSettings(tx, agentID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_targets WHERE agent_id=?`, agentID); err != nil {
 		return err
 	}
 	for _, t := range targets {
-		monitorsJSON, err := encodeMonitors(t.Monitors)
+		monitorsJSON, err := encodeMonitors(normalizedTargetMonitors(t, existingByTarget))
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO agent_targets (agent_id, target_id, name, host, port, timeout_ms, monitors_json) VALUES (?,?,?,?,?,?,?)`,
-			agentID, t.TargetID, t.Name, t.Host, t.Port, normalizedTimeout(t.TimeoutMs), monitorsJSON,
+			`INSERT INTO agent_targets (agent_id, target_id, name, host, port, timeout_ms, public_visible, monitors_json) VALUES (?,?,?,?,?,?,?,?)`,
+			agentID, t.TargetID, t.Name, t.Host, t.Port, normalizedTimeout(t.TimeoutMs), normalizedPublicVisible(t, existingByTarget), monitorsJSON,
 		); err != nil {
 			return err
 		}
@@ -464,38 +519,73 @@ func (s *Store) UpsertTargets(agentID string, targets []AgentTarget) error {
 	return tx.Commit()
 }
 
-func (s *Store) TargetsForAgent(agentID string) ([]AgentTarget, error) {
-	rows, err := s.db.Query(`SELECT agent_id, target_id, name, host, port, timeout_ms, monitors_json FROM agent_targets WHERE agent_id=?`, agentID)
+type existingTargetSetting struct {
+	PublicVisible bool
+	Monitors      Monitors
+}
+
+func existingTargetSettings(tx *sql.Tx, agentID string) (map[string]existingTargetSetting, error) {
+	rows, err := tx.Query(`SELECT target_id, public_visible, monitors_json FROM agent_targets WHERE agent_id=?`, agentID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AgentTarget
+	out := map[string]existingTargetSetting{}
 	for rows.Next() {
-		var t AgentTarget
+		var targetID string
+		var visible bool
 		var monitorsJSON string
-		if err := rows.Scan(&t.AgentID, &t.TargetID, &t.Name, &t.Host, &t.Port, &t.TimeoutMs, &monitorsJSON); err != nil {
+		if err := rows.Scan(&targetID, &visible, &monitorsJSON); err != nil {
 			return nil, err
 		}
-		t.Monitors = decodeMonitors(monitorsJSON)
-		out = append(out, t)
+		out[targetID] = existingTargetSetting{PublicVisible: visible, Monitors: decodeMonitors(monitorsJSON)}
 	}
 	return out, rows.Err()
 }
 
-func (s *Store) AllTargets() ([]AgentTarget, error) {
-	rows, err := s.db.Query(`SELECT agent_id, target_id, name, host, port, timeout_ms, monitors_json FROM agent_targets ORDER BY agent_id, name`)
+func (s *Store) TargetsForAgent(agentID string) ([]AgentTarget, error) {
+	rows, err := s.db.Query(`SELECT agent_id, target_id, name, host, port, timeout_ms, public_visible, monitors_json FROM agent_targets WHERE agent_id=?`, agentID)
 	if err != nil {
 		return nil, err
 	}
+	return scanTargets(rows)
+}
+
+func (s *Store) AllTargets() ([]AgentTarget, error) {
+	rows, err := s.db.Query(`SELECT agent_id, target_id, name, host, port, timeout_ms, public_visible, monitors_json FROM agent_targets ORDER BY agent_id, name`)
+	if err != nil {
+		return nil, err
+	}
+	return scanTargets(rows)
+}
+
+func (s *Store) PublicTargets() ([]AgentTarget, error) {
+	rows, err := s.db.Query(`SELECT agent_id, target_id, name, host, port, timeout_ms, public_visible, monitors_json FROM agent_targets WHERE public_visible=1 ORDER BY agent_id, name`)
+	if err != nil {
+		return nil, err
+	}
+	return scanTargets(rows)
+}
+
+func (s *Store) TargetPublicVisible(agentID, targetID string) (bool, error) {
+	var visible bool
+	err := s.db.QueryRow(`SELECT public_visible FROM agent_targets WHERE agent_id=? AND target_id=?`, agentID, targetID).Scan(&visible)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return visible, err
+}
+
+func scanTargets(rows *sql.Rows) ([]AgentTarget, error) {
 	defer rows.Close()
 	var out []AgentTarget
 	for rows.Next() {
 		var t AgentTarget
 		var monitorsJSON string
-		if err := rows.Scan(&t.AgentID, &t.TargetID, &t.Name, &t.Host, &t.Port, &t.TimeoutMs, &monitorsJSON); err != nil {
+		if err := rows.Scan(&t.AgentID, &t.TargetID, &t.Name, &t.Host, &t.Port, &t.TimeoutMs, &t.PublicVisible, &monitorsJSON); err != nil {
 			return nil, err
 		}
+		t.PublicVisibleSet = true
 		t.Monitors = decodeMonitors(monitorsJSON)
 		out = append(out, t)
 	}

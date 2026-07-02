@@ -67,6 +67,7 @@
     'Host': '主机',
     'Port': '端口',
     'Timeout (ms)': '超时（毫秒）',
+    'Publicly visible': '对外可见',
     'Interval (sec)': '周期（秒）',
     'Players': '人数',
     'Latency': '延迟',

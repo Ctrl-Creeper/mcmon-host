@@ -160,11 +160,42 @@ docker compose up -d
 
 如果要删除 agent，在 `Agents` 页面使用删除操作。host 会同时删除该 agent、它的目标配置和已保存的指标历史。
 
+## 目标配置
+
+目标服务器配置保存在 host 端，并随一键安装脚本下发给 agent。每个目标都可以在 `Agents` 页面弹窗里设置是否 `public_visible`。
+
+```json
+{
+  "target_id": "server-1",
+  "name": "Minecraft Server",
+  "host": "mc.example.com",
+  "port": 25565,
+  "timeout_ms": 1500,
+  "public_visible": true,
+  "monitors": {
+    "online": { "enabled": true, "interval_sec": 60 },
+    "players": { "enabled": true, "interval_sec": 60 },
+    "latency": { "enabled": true, "interval_sec": 60, "probes_per_burst": 5, "probe_gap_ms": 1500, "protocol_version": 760 },
+    "loss": { "enabled": true, "interval_sec": 60, "probes_per_burst": 5, "probe_gap_ms": 1500 }
+  }
+}
+```
+
+`public_visible` 只影响公开只读接口；管理员 dashboard 和 admin API 始终能看到所有目标。旧目标升级后默认对外可见。关闭后，监控仍然继续，只是不出现在公开目标列表和公开指标查询里。
+
 ## Agent 安装
 
 agent 安装命令由 `mcmon-host` 在创建节点并配置目标后生成。不要手写 agent 命令；生成脚本会包含正确的 host endpoint、agent token、agent ID 和不可变的 base64 目标配置。
 
 进入 `Agents`，选择节点，然后复制 Linux/macOS 或 Windows PowerShell 安装命令。脚本会从 `mcmon-agent` 仓库下载对应平台 installer，写入 host 提供的配置，并启动后台服务或任务。
+
+## API 摘要
+
+admin API 使用用户名/密码 session 登录；legacy bearer `admin_token` 仍作为兼容 fallback。公开只读接口不需要登录，但只返回 `public_visible=true` 的目标：
+
+- `GET /api/public/targets`
+- `GET /api/public/series?agent=...&target=...&range=...`
+- `GET /api/public/metrics?agent=...&target=...&metric=...&range=...`
 
 ## 开发检查
 

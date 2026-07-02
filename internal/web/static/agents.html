@@ -168,6 +168,7 @@ function defaultTarget() {
     host: 'mc.example.com',
     port: 25565,
     timeout_ms: 1500,
+    public_visible: true,
     monitors: {
       online: { enabled: true, interval_sec: 60 },
       players: { enabled: true, interval_sec: 60 },
@@ -245,6 +246,10 @@ function renderTargetForms() {
         <label>Port<input type="number" min="1" max="65535" step="1" data-field="port" value="${Number(normalized.port || 25565)}"></label>
         <label>Timeout (ms)<input type="number" min="100" step="100" data-field="timeout_ms" value="${Number(normalized.timeout_ms || 1500)}"></label>
       </div>
+      <label class="toggle-line visibility-toggle">
+        <input type="checkbox" data-field="public_visible" ${normalized.public_visible !== false ? 'checked' : ''}>
+        <span>Publicly visible</span>
+      </label>
       <div class="monitor-grid">
         ${monitorBlock('Online', 'online', normalized.monitors.online, false)}
         ${monitorBlock('Players', 'players', normalized.monitors.players, false)}
@@ -295,6 +300,7 @@ function collectTargets() {
       host,
       port: readNumber(editor, '[data-field="port"]', 25565),
       timeout_ms: readNumber(editor, '[data-field="timeout_ms"]', 1500),
+      public_visible: editor.querySelector('[data-field="public_visible"]').checked,
       monitors
     };
   });

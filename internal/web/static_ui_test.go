@@ -48,3 +48,12 @@ func TestAccountSecurityLivesOnSettingsPage(t *testing.T) {
 		t.Fatalf("settings.html should contain account security controls")
 	}
 }
+
+func TestAgentTargetEditorIncludesPublicVisibilityControl(t *testing.T) {
+	agents := readStaticFile(t, "agents.html")
+	for _, want := range []string{"public_visible", "Publicly visible"} {
+		if !strings.Contains(agents, want) {
+			t.Fatalf("agents.html missing target visibility control marker %q", want)
+		}
+	}
+}
